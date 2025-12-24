@@ -1,7 +1,7 @@
 // src/pages/Locations.tsx
 import React, { useState, useEffect } from "react";
 import { MapPin, Navigation, RefreshCw, Target } from "lucide-react";
-import { api } from "../services/api";
+import api from "../services/api";
 import MoveToCoordinateModal from "../components/modals/MoveToCoordinateModal";
 
 interface Location {

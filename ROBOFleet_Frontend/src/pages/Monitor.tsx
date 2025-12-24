@@ -1,4 +1,4 @@
-// src/components/Monitor.tsx
+// src/pages/Monitor.tsx
 import React, { useEffect, useState } from "react";
 import {
   Battery,
@@ -15,7 +15,7 @@ import {
   TrendingUp,
   Radio,
 } from "lucide-react";
-import { api } from "../services/api";
+import api from "../services/api";  // ✅ ONLY FIX - Changed from { api }
 import { robotStatusService } from "../services/robotStatusService";
 
 /* ---------- Types ------------------------------------------------------ */

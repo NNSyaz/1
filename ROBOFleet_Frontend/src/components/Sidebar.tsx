@@ -1,7 +1,7 @@
 // src/components/Sidebar.tsx - UPDATED
 import {
   Bot,
-  GitGraph,
+  Network,
   LayoutDashboard,
   Monitor,
   Settings2Icon,
@@ -21,7 +21,7 @@ const Sidebar = ({ activePage, setActivePage }: SidebarProps) => {
     { id: "robot", icon: Bot, label: "Robots" },
     { id: "monitor", icon: Monitor, label: "Monitor" },
     { id: "tasks", icon: ListTodo, label: "Tasks" },
-    { id: "analyze", icon: GitGraph, label: "Analyze" },
+    { id: "analyze", icon: Network, label: "Analyze" },
     { id: "setting", icon: Settings2Icon, label: "Settings" },
   ];
 

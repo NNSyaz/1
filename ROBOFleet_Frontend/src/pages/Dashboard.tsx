@@ -1,12 +1,12 @@
 // src/components/Dashboard.tsx - FIXED VERSION
 import React, { useState, useEffect } from "react";
 import {
-  Activity,
+//Activity,
   Bot,
   Circle,
-  Layers2,
+//Layers,
   AlertCircle,
-  Wrench,
+//Wrench,
   RefreshCw,
   TrendingUp,
   TrendingDown,
@@ -15,13 +15,13 @@ import {
   MapPin,
   Zap,
   CheckCircle2,
-  XCircle,
+//XCircle,
   AlertTriangle,
-  BarChart3,
-  Calendar,
+//BarChart3,
+//Calendar,
   Filter,
 } from "lucide-react";
-import { api } from "../services/api";
+import  api  from "../services/api";
 import { robotStatusService } from "../services/robotStatusService";
 
 interface RobotData {
@@ -275,11 +275,6 @@ const Dashboard = () => {
 
   const handleRefresh = () => fetchDashboardData();
 
-  const getBatteryColor = (n: number) => {
-    if (n <= 20) return "bg-red-500";
-    if (n <= 40) return "bg-yellow-500";
-    return "bg-green-500";
-  };
 
   const getBatteryIcon = (n: number) => {
     if (n <= 20) return "text-red-500";

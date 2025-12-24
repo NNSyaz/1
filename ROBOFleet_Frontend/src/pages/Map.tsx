@@ -1,7 +1,7 @@
 // src/pages/Map.tsx
 import React, { useState, useEffect, useRef } from "react";
 import { RefreshCw, MapPin, Navigation } from "lucide-react";
-import { api } from "../services/api";
+import api from "../services/api";
 
 interface Robot {
   id: string;

@@ -1,281 +1,331 @@
-// src/pages/Tasks.tsx
 import React, { useState, useEffect } from "react";
 import {
-  CheckCircle2,
-  XCircle,
-  Clock,
-  AlertCircle,
-  Plus,
-  RefreshCw,
-  Filter,
-} from "lucide-react";
-import { api } from "../services/api";
-import CreateTaskModal from "../components/modals/CreateTaskModal";
+  Box,
+  Card,
+  CardContent,
+  Typography,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Paper,
+  Chip,
+  CircularProgress,
+  Alert,
+  Button,
+} from "@mui/material";
+import { Refresh as RefreshIcon } from "@mui/icons-material";
+import api from "../services/api";
 
 interface Task {
   task_id: string;
-  robot_id: string;
-  last_poi: string;
-  target_poi: string;
+  robot_sn: string;
+  robot_name?: string;
+  task_type: string;
   status: string;
-  distance?: number;
-  start_time: string;
-  end_time?: string;
+  target?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+  error_message?: string;
 }
 
 const Tasks: React.FC = () => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all");
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
-  const fetchTasks = async () => {
+  // Fetch task history from API
+  const fetchTasks = async (showLoading = true) => {
     try {
-      setLoading(true);
-      const data = await api.getTaskHistory();
-      setTasks(data);
-    } catch (error) {
-      console.error("Failed to fetch tasks:", error);
-    } finally {
+      if (showLoading) {
+        setLoading(true);
+      }
+      setError(null);
+
+      const response = await api.getTaskHistory();
+      
+      if (!response) {
+        throw new Error("No response from server");
+      }
+
+      // Handle different response formats
+      let taskList: Task[] = [];
+      
+      if (Array.isArray(response)) {
+        taskList = response;
+      } else if (response.tasks && Array.isArray(response.tasks)) {
+        taskList = response.tasks;
+      } else if (response.data && Array.isArray(response.data)) {
+        taskList = response.data;
+      }
+
+      // Sort tasks by creation date (newest first)
+      taskList.sort((a, b) => {
+        const dateA = new Date(a.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || 0).getTime();
+        return dateB - dateA;
+      });
+
+      setTasks(taskList);
       setLoading(false);
+      setRetryCount(0);
+    } catch (err) {
+      console.error("Error fetching tasks:", err);
+      
+      // Only retry if this is not a manual retry
+      if (retryCount < 3 && showLoading) {
+        console.log(`Retrying... Attempt ${retryCount + 1}/3`);
+        setTimeout(() => {
+          setRetryCount((prev) => prev + 1);
+        }, 2000);
+      } else {
+        setError(
+          err instanceof Error 
+            ? `Failed to load tasks: ${err.message}` 
+            : "Failed to load tasks. Please check your connection and try again."
+        );
+        setLoading(false);
+      }
     }
   };
 
+  // Auto-retry on error
+  useEffect(() => {
+    if (retryCount > 0 && retryCount <= 3) {
+      fetchTasks();
+    }
+  }, [retryCount]);
+
+  // Initial load
   useEffect(() => {
     fetchTasks();
-    const interval = setInterval(fetchTasks, 30000);
+
+    // Set up auto-refresh every 30 seconds
+    const interval = setInterval(() => {
+      fetchTasks(false);
+    }, 30000);
+
     return () => clearInterval(interval);
   }, []);
 
-  const filteredTasks = tasks.filter((task) => {
-    if (filter === "all") return true;
-    return task.status === filter;
-  });
-
-  const getStatusBadge = (status: string) => {
-    const styles = {
-      completed: "bg-green-100 text-green-700 border-green-200",
-      in_progress: "bg-blue-100 text-blue-700 border-blue-200",
-      pending: "bg-yellow-100 text-yellow-700 border-yellow-200",
-      failed: "bg-red-100 text-red-700 border-red-200",
-      cancelled: "bg-gray-100 text-gray-700 border-gray-200",
-    };
-    return styles[status as keyof typeof styles] || styles.pending;
+  // Manual refresh handler
+  const handleRefresh = () => {
+    setRetryCount(0);
+    fetchTasks(true);
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
+  // Get status color
+  const getStatusColor = (
+    status: string
+  ): "default" | "primary" | "secondary" | "error" | "warning" | "info" | "success" => {
+    switch (status?.toLowerCase()) {
       case "completed":
-        return <CheckCircle2 className="w-4 h-4" />;
-      case "failed":
-        return <XCircle className="w-4 h-4" />;
+      case "success":
+        return "success";
+      case "running":
       case "in_progress":
-        return <Clock className="w-4 h-4 animate-spin" />;
+        return "primary";
+      case "pending":
+      case "queued":
+        return "info";
+      case "failed":
+      case "error":
+        return "error";
+      case "cancelled":
+      case "canceled":
+        return "warning";
       default:
-        return <AlertCircle className="w-4 h-4" />;
+        return "default";
     }
   };
 
-  const pending = tasks.filter((t) => t.status === "pending").length;
-  const running = tasks.filter((t) => t.status === "in_progress").length;
-  const completed = tasks.filter((t) => t.status === "completed").length;
-  const failed = tasks.filter((t) => t.status === "failed").length;
+  // Format date
+  const formatDate = (dateString: string): string => {
+    if (!dateString) return "N/A";
+    
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return dateString;
+    }
+  };
+
+  // Calculate duration
+  const calculateDuration = (startedAt?: string, completedAt?: string): string => {
+    if (!startedAt) return "N/A";
+    
+    try {
+      const start = new Date(startedAt).getTime();
+      const end = completedAt ? new Date(completedAt).getTime() : Date.now();
+      const durationMs = end - start;
+      
+      if (durationMs < 0) return "N/A";
+      
+      const seconds = Math.floor(durationMs / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      
+      if (hours > 0) {
+        return `${hours}h ${minutes % 60}m`;
+      } else if (minutes > 0) {
+        return `${minutes}m ${seconds % 60}s`;
+      } else {
+        return `${seconds}s`;
+      }
+    } catch {
+      return "N/A";
+    }
+  };
+
+  if (loading && tasks.length === 0) {
+    return (
+      <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: "50vh" }}>
+        <CircularProgress />
+      </Box>
+    );
+  }
 
   return (
-    <div className="flex-1 overflow-auto bg-gray-50">
-      <div className="max-w-7xl mx-auto px-6 py-6">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Task Management</h1>
-            <p className="text-sm text-gray-500 mt-1">Monitor and manage robot tasks</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={fetchTasks}
+    <Box sx={{ p: 3 }}>
+      <Card>
+        <CardContent>
+          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+            <Box>
+              <Typography variant="h5" component="h2" gutterBottom>
+                Task History
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                View all robot tasks and their status
+              </Typography>
+            </Box>
+            <Button
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={handleRefresh}
               disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50"
             >
-              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
               Refresh
-            </button>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              <Plus className="w-4 h-4" />
-              Create Task
-            </button>
-          </div>
-        </div>
+            </Button>
+          </Box>
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
-            <div className="flex items-center justify-between mb-2">
-              <div className="p-2 bg-yellow-100 rounded-lg">
-                <Clock className="w-5 h-5 text-yellow-600" />
-              </div>
-              <span className="text-2xl font-bold text-gray-900">{pending}</span>
-            </div>
-            <div className="text-sm font-medium text-gray-600">Pending Tasks</div>
-          </div>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+              {error}
+              <Button size="small" onClick={handleRefresh} sx={{ ml: 2 }}>
+                Retry
+              </Button>
+            </Alert>
+          )}
 
-          <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
-            <div className="flex items-center justify-between mb-2">
-              <div className="p-2 bg-blue-100 rounded-lg">
-                <RefreshCw className="w-5 h-5 text-blue-600" />
-              </div>
-              <span className="text-2xl font-bold text-gray-900">{running}</span>
-            </div>
-            <div className="text-sm font-medium text-gray-600">Running Tasks</div>
-          </div>
+          {retryCount > 0 && retryCount <= 3 && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Retrying... Attempt {retryCount}/3
+            </Alert>
+          )}
 
-          <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
-            <div className="flex items-center justify-between mb-2">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <CheckCircle2 className="w-5 h-5 text-green-600" />
-              </div>
-              <span className="text-2xl font-bold text-gray-900">{completed}</span>
-            </div>
-            <div className="text-sm font-medium text-gray-600">Completed Today</div>
-          </div>
+          {!loading && !error && tasks.length === 0 && (
+            <Box sx={{ textAlign: "center", py: 4 }}>
+              <Typography variant="body1" color="text.secondary">
+                No tasks found. Tasks will appear here when robots execute commands.
+              </Typography>
+            </Box>
+          )}
 
-          <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
-            <div className="flex items-center justify-between mb-2">
-              <div className="p-2 bg-red-100 rounded-lg">
-                <XCircle className="w-5 h-5 text-red-600" />
-              </div>
-              <span className="text-2xl font-bold text-gray-900">{failed}</span>
-            </div>
-            <div className="text-sm font-medium text-gray-600">Failed Tasks</div>
-          </div>
-        </div>
-
-        {/* Tasks Table */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-          <div className="p-6 border-b border-gray-100">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">Task History</h2>
-              <div className="flex items-center gap-2">
-                <Filter className="w-4 h-4 text-gray-400" />
-                <select
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="all">All Status</option>
-                  <option value="pending">Pending</option>
-                  <option value="in_progress">Running</option>
-                  <option value="completed">Completed</option>
-                  <option value="failed">Failed</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  <th className="text-left py-3 px-6 text-sm font-semibold text-gray-700">
-                    Task ID
-                  </th>
-                  <th className="text-left py-3 px-6 text-sm font-semibold text-gray-700">
-                    Robot
-                  </th>
-                  <th className="text-left py-3 px-6 text-sm font-semibold text-gray-700">
-                    Route
-                  </th>
-                  <th className="text-left py-3 px-6 text-sm font-semibold text-gray-700">
-                    Status
-                  </th>
-                  <th className="text-left py-3 px-6 text-sm font-semibold text-gray-700">
-                    Distance
-                  </th>
-                  <th className="text-left py-3 px-6 text-sm font-semibold text-gray-700">
-                    Start Time
-                  </th>
-                  <th className="text-left py-3 px-6 text-sm font-semibold text-gray-700">
-                    Duration
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTasks.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-center py-12 text-gray-500">
-                      No tasks yet. Create your first task!
-                    </td>
-                  </tr>
-                ) : (
-                  filteredTasks.map((task) => {
-                    const duration = task.end_time
-                      ? Math.round(
-                          (new Date(task.end_time).getTime() -
-                            new Date(task.start_time).getTime()) /
-                            1000
-                        )
-                      : Math.round(
-                          (Date.now() - new Date(task.start_time).getTime()) / 1000
-                        );
-
-                    const minutes = Math.floor(duration / 60);
-                    const seconds = duration % 60;
-
-                    return (
-                      <tr
-                        key={task.task_id}
-                        className="border-b border-gray-100 hover:bg-gray-50"
-                      >
-                        <td className="py-3 px-6 text-sm font-mono text-gray-700">
-                          #{task.task_id.slice(-6)}
-                        </td>
-                        <td className="py-3 px-6 text-sm text-gray-900 font-medium">
-                          Robot {task.robot_id}
-                        </td>
-                        <td className="py-3 px-6 text-sm text-gray-700">
-                          {task.last_poi} → {task.target_poi}
-                        </td>
-                        <td className="py-3 px-6">
-                          <span
-                            className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border ${getStatusBadge(
-                              task.status
-                            )}`}
+          {tasks.length > 0 && (
+            <TableContainer component={Paper} sx={{ mt: 2, maxHeight: 600 }}>
+              <Table stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    <TableCell><strong>Task ID</strong></TableCell>
+                    <TableCell><strong>Robot</strong></TableCell>
+                    <TableCell><strong>Type</strong></TableCell>
+                    <TableCell><strong>Target/Destination</strong></TableCell>
+                    <TableCell><strong>Status</strong></TableCell>
+                    <TableCell><strong>Created</strong></TableCell>
+                    <TableCell><strong>Duration</strong></TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {tasks.map((task) => (
+                    <TableRow key={task.task_id} hover>
+                      <TableCell>
+                        <Typography variant="body2" fontFamily="monospace" fontSize="0.85em">
+                          {task.task_id}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {task.robot_name || task.robot_sn}
+                        </Typography>
+                        {task.robot_name && (
+                          <Typography variant="caption" color="text.secondary">
+                            {task.robot_sn}
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ textTransform: "capitalize" }}>
+                          {task.task_type?.replace(/_/g, " ") || "Unknown"}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {task.target || "N/A"}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={task.status?.toUpperCase() || "UNKNOWN"}
+                          size="small"
+                          color={getStatusColor(task.status)}
+                        />
+                        {task.error_message && (
+                          <Typography 
+                            variant="caption" 
+                            color="error" 
+                            display="block" 
+                            sx={{ mt: 0.5, maxWidth: 200 }}
                           >
-                            {getStatusIcon(task.status)}
-                            {task.status}
-                          </span>
-                        </td>
-                        <td className="py-3 px-6 text-sm text-gray-700">
-                          {task.distance ? `${task.distance.toFixed(1)}m` : "-"}
-                        </td>
-                        <td className="py-3 px-6 text-sm text-gray-600">
-                          {new Date(task.start_time).toLocaleString()}
-                        </td>
-                        <td className="py-3 px-6 text-sm text-gray-700">
-                          {minutes}:{seconds.toString().padStart(2, "0")}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+                            {task.error_message}
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {formatDate(task.created_at)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {calculateDuration(task.started_at, task.completed_at)}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
 
-      {showCreateModal && (
-        <CreateTaskModal
-          onClose={() => setShowCreateModal(false)}
-          onSuccess={() => {
-            setShowCreateModal(false);
-            fetchTasks();
-          }}
-        />
-      )}
-    </div>
+          {tasks.length > 0 && (
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: "block" }}>
+              Showing {tasks.length} task{tasks.length !== 1 ? "s" : ""} • Auto-refreshes every 30 seconds
+            </Typography>
+          )}
+        </CardContent>
+      </Card>
+    </Box>
   );
 };
 

@@ -22,7 +22,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { api } from "../services/api";
+import api from "../services/api";
 
 // Type definitions
 interface Metric {
@@ -151,19 +151,35 @@ const Analyze = () => {
     let ws: WebSocket | null = null;
 
     try {
-      ws = api.createRobotStatusWebSocket(
-        (data) => {
-          console.log("Robot status:", data.status);
-          // Update real-time battery average
-          setRealtimeBattery(data.battery);
-
-          // You can also update the avgBattery state if needed
-          setAvgBattery(Math.round(data.battery));
-        },
-        (error) => {
+      // Get the first robot's serial number
+      if (robotIds.length > 0) {
+        ws = api.createRobotStatusWebSocket(robotIds[0]);
+        
+        // Set up message handler
+        ws.onmessage = (event: MessageEvent) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log("Robot status:", data.status);
+            
+            if (data.battery !== undefined) {
+              setRealtimeBattery(data.battery);
+              setAvgBattery(Math.round(data.battery));
+            }
+          } catch (e) {
+            console.error("Failed to parse WebSocket message:", e);
+          }
+        };
+        
+        // Set up error handler
+        ws.onerror = (error: Event) => {
           console.error("Robot status WebSocket error:", error);
-        }
-      );
+        };
+        
+        // Set up close handler
+        ws.onclose = () => {
+          console.log("WebSocket connection closed");
+        };
+      }
     } catch (error) {
       console.error("Failed to create robot status WebSocket:", error);
     }
@@ -173,7 +189,7 @@ const Analyze = () => {
         ws.close();
       }
     };
-  }, []);
+  }, [robotIds]);  // ✅ Added robotIds dependency
 
   // Metrics with real data where available
   const metrics: Metric[] = [

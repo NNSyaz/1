@@ -1,313 +1,510 @@
-// src/services/api.ts - COMPLETE VERSION
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://192.168.0.183:8000";
-const WS_BASE_URL = API_BASE_URL.replace("http", "ws");
+import axios from "axios";
 
-const getAuthHeaders = () => ({
-  "Content-Type": "application/json",
+// Base API URL - adjust this to match your backend
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 10000,
+  headers: {
+    "Content-Type": "application/json",
+  },
 });
 
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-    try {
-      const errorData = await response.json();
-      errorMessage = errorData.msg || errorData.error || errorMessage;
-    } catch {}
-    throw new Error(errorMessage);
+// Add request interceptor for auth if needed
+api.interceptors.request.use(
+  (config) => {
+    // Add auth token if available
+    const token = localStorage.getItem("auth_token");
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
   }
-  return response.json();
-}
+);
 
-export const api = {
-  // ============ Health & Connection ============
-  async checkHealth() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/health`);
-      return response.ok;
-    } catch {
-      return false;
-    }
-  },
+// Add response interceptor for error handling
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    console.error("API Error:", error.response?.data || error.message);
+    return Promise.reject(error);
+  }
+);
 
-  // ============ Robot Management ============
-  async getRegisteredRobots() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/get/robot_list`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await handleResponse<any>(response);
-      return Array.isArray(data) ? data : data.robots || [];
-    } catch (error) {
-      console.error("Failed to get registered robots:", error);
-      return [];
-    }
-  },
+// ============================================================================
+// ROBOT MANAGEMENT APIs
+// ============================================================================
 
-  async registerRobot(payload: { name: string; nickname: string; sn: string; ip: string; model: string }) {
-    const response = await fetch(`${API_BASE_URL}/api/v1/robot/register`, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: JSON.stringify(payload),
-    });
-    return handleResponse<{ status: number; msg: string }>(response);
-  },
-
-  async deleteRobot(nickname: string) {
-    const response = await fetch(
-      `${API_BASE_URL}/api/v1/robot/delete/robot_name?name=${encodeURIComponent(nickname)}`,
-      { headers: getAuthHeaders() }
-    );
-    return handleResponse<any>(response);
-  },
-
-  async getRobotStatus(sn: string) {
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/get/robot_status?sn=${encodeURIComponent(sn)}`,
-        { headers: getAuthHeaders() }
-      );
-      if (response.status === 404) {
-        return { 
-          robotStatus: { state: 0, power: 0, areaName: "Unknown" },
-          position: { x: 0, y: 0, yaw: 0 }
-        };
-      }
-      const data = await handleResponse<any>(response);
-      
-      // Ensure position exists in response
-      if (!data.position && data.robotStatus?.position) {
-        data.position = data.robotStatus.position;
-      }
-      
-      return data;
-    } catch (error) {
-      console.error(`Failed to get robot status for ${sn}:`, error);
-      return { 
-        robotStatus: { state: 0, power: 0, areaName: "Unknown" },
-        position: { x: 0, y: 0, yaw: 0 }
-      };
-    }
-  },
-
-  async getRobotLocation(sn: string) {
-    const response = await fetch(
-      `${API_BASE_URL}/api/v1/robot/get/robot_location/${encodeURIComponent(sn)}`,
-      { headers: getAuthHeaders() }
-    );
-    return handleResponse<any>(response);
-  },
-
-  // ============ POI Management ============
-  async getPOIList() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/get/poi_list`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await handleResponse<any>(response);
-      return Array.isArray(data) ? data : data.pois || [];
-    } catch {
-      return [];
-    }
-  },
-
-  async setPOI(name: string) {
-    const response = await fetch(
-      `${API_BASE_URL}/api/v1/robot/set/poi?name=${encodeURIComponent(name)}`,
-      { headers: getAuthHeaders() }
-    );
-    return handleResponse<any>(response);
-  },
-
-  async getPOIDetails(poiName: string) {
-    const response = await fetch(
-      `${API_BASE_URL}/api/v1/robot/get/poi_details?poi=${encodeURIComponent(poiName)}`,
-      { headers: getAuthHeaders() }
-    );
-    return handleResponse<any>(response);
-  },
-
-  // ============ Robot Movement ============
-  async moveToPOI(poiName: string) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/move/poi?name=${encodeURIComponent(poiName)}`,
-        { headers: getAuthHeaders(), signal: controller.signal }
-      );
-
-      clearTimeout(timeoutId);
-      return await response.json();
-    } catch (error: any) {
-      if (error.name === "AbortError") {
-        return { status: 504, msg: "Request timeout" };
-      }
-      return { status: 500, msg: error.message || "Failed to connect" };
-    }
-  },
-
-  async moveToCharge() {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/move/charge`, {
-        headers: getAuthHeaders(),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-      return await response.json();
-    } catch (error: any) {
-      if (error.name === "AbortError") {
-        return { status: 504, msg: "Request timeout" };
-      }
-      return { status: 500, msg: error.message || "Failed to connect" };
-    }
-  },
-
-  async moveToCoordinate(x: number, y: number, yaw: number, sn?: string) {
-    const endpoint = sn
-      ? `${API_BASE_URL}/api/v1/robot/temi/command/move_coordinate`
-      : `${API_BASE_URL}/edge/v1/robot/move/coordinate`;
-
-    const body = sn
-      ? { sn, x, y, yaw }
-      : { target_x: x, target_y: y, target_ori: yaw };
-
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    });
-    return handleResponse<any>(response);
-  },
-
-  async cancelMove() {
-    const response = await fetch(`${API_BASE_URL}/api/v1/robot/move/cancel`, {
-      headers: getAuthHeaders(),
-    });
-    return handleResponse<any>(response);
-  },
-
-  async stopRobot(sn: string) {
-    const response = await fetch(`${API_BASE_URL}/api/v1/robot/temi/command/stop`, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ sn }),
-    });
-    return handleResponse<any>(response);
-  },
-
-  // ============ Tasks ============
-  async dispatchTask(taskType: string, robotSn: string | null, params: any) {
-    const response = await fetch(`${API_BASE_URL}/api/v1/task/dispatch`, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ task_type: taskType, robot_sn: robotSn, ...params }),
-    });
-    return handleResponse<any>(response);
-  },
-
-  async getTaskHistory() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/get/task_history`, {
-        headers: getAuthHeaders(),
-      });
-      const data = await handleResponse<any>(response);
-      return Array.isArray(data) ? data : data.tasks || [];
-    } catch {
-      return [];
-    }
-  },
-
-  // ============ Manual Control ============
-  async sendManualControl(linear: number, angular: number, sn?: string) {
-    const endpoint = sn
-      ? `${API_BASE_URL}/api/v1/robot/temi/command/manual_control`
-      : `${API_BASE_URL}/edge/v1/robot/control/manual`;
-
-    const body = sn ? { sn, linear, angular } : { linear, angular };
-
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    });
-    return handleResponse<any>(response);
-  },
-
-  async enableRemoteControl() {
-    const response = await fetch(`${API_BASE_URL}/api/v1/robot/control/enable_remote`, {
-      headers: getAuthHeaders(),
-    });
-    return handleResponse<any>(response);
-  },
-
-  // ============ Temi Specific ============
-  async getTemiLocations(sn: string) {
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/temi/locations?sn=${encodeURIComponent(sn)}`,
-        { headers: getAuthHeaders() }
-      );
-      return handleResponse<any>(response);
-    } catch {
-      return [];
-    }
-  },
-
-  async makeTemiSpeak(sn: string, text: string) {
-    return this.dispatchTask("speak", sn, { text });
-  },
-
-  // ============ WebSocket Connections ============
-  createRobotStatusWebSocket(
-    onMessage: (data: { status: string; battery: number; last_poi: string }) => void,
-    onError?: (error: any) => void
-  ): WebSocket {
-    let reconnectAttempts = 0;
-    const maxReconnectAttempts = 5;
-    const reconnectDelay = 3000;
-
-    const connect = (): WebSocket => {
-      const ws = new WebSocket(`${WS_BASE_URL}/api/v1/robot/ws/get/robot_status`);
-
-      ws.onopen = () => {
-        console.log("Robot status WebSocket connected");
-        reconnectAttempts = 0;
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          onMessage(data);
-        } catch (error) {
-          console.error("Failed to parse robot status message:", error);
-          if (onError) onError(error);
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error("Robot status WebSocket error:", error);
-        if (onError) onError(error);
-      };
-
-      ws.onclose = (event) => {
-        console.log(`Robot status WebSocket closed: ${event.code}`);
-        if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
-          reconnectAttempts++;
-          setTimeout(() => connect(), reconnectDelay);
-        }
-      };
-
-      return ws;
-    };
-
-    return connect();
-  },
+/**
+ * Get list of all registered robots
+ */
+export const getRobotList = async () => {
+  const response = await api.get("/api/v1/robot/get/robot_list");
+  return response.data;
 };
 
-export { API_BASE_URL, WS_BASE_URL };
-export default api;
+/**
+ * Get detailed status of a specific robot
+ * @param sn Robot serial number
+ */
+export const getRobotStatus = async (sn: string) => {
+  const response = await api.get("/api/v1/robot/get/robot_status", {
+    params: { sn },
+  });
+  return response.data;
+};
+
+/**
+ * Register a new robot
+ * @param robotData Robot registration data
+ */
+export const registerRobot = async (robotData: any) => {
+  const response = await api.post("/api/v1/robot/register", robotData);
+  return response.data;
+};
+
+/**
+ * Update robot information
+ * @param sn Robot serial number
+ * @param updateData Data to update
+ */
+export const updateRobot = async (sn: string, updateData: any) => {
+  const response = await api.put(`/api/v1/robot/update/${sn}`, updateData);
+  return response.data;
+};
+
+/**
+ * Delete a robot
+ * @param sn Robot serial number
+ */
+export const deleteRobot = async (sn: string) => {
+  const response = await api.delete(`/api/v1/robot/delete/${sn}`);
+  return response.data;
+};
+
+// ============================================================================
+// POI (Point of Interest) APIs
+// ============================================================================
+
+/**
+ * Get list of all POIs/locations
+ */
+export const getPOIList = async () => {
+  const response = await api.get("/api/v1/robot/get/poi_list");
+  return response.data;
+};
+
+/**
+ * Add a new POI
+ * @param poiData POI data
+ */
+export const addPOI = async (poiData: any) => {
+  const response = await api.post("/api/v1/poi/add", poiData);
+  return response.data;
+};
+
+/**
+ * Get Temi-specific locations
+ * @param sn Robot serial number
+ */
+export const getTemiLocations = async (sn: string) => {
+  const response = await api.get("/api/v1/robot/temi/locations", {
+    params: { sn },
+  });
+  return response.data;
+};
+
+/**
+ * Set/Save current position as POI
+ * @param poiName POI name
+ * @param sn Robot serial number (optional)
+ * @param position Position data (optional)
+ */
+export const setPOI = async (poiName: string, sn?: string, position?: any) => {
+  const response = await api.post("/api/v1/poi/set", {
+    name: poiName,
+    sn,
+    ...position,
+  });
+  return response.data;
+};
+
+// ============================================================================
+// TASK MANAGEMENT APIs
+// ============================================================================
+
+/**
+ * Get task history
+ */
+export const getTaskHistory = async () => {
+  const response = await api.get("/api/v1/robot/get/task_history");
+  return response.data;
+};
+
+/**
+ * Get specific task details
+ * @param taskId Task ID
+ */
+export const getTaskDetails = async (taskId: string) => {
+  const response = await api.get(`/api/v1/robot/get/task/${taskId}`);
+  return response.data;
+};
+
+/**
+ * Cancel a running task
+ * @param sn Robot serial number
+ */
+export const cancelTask = async (sn: string) => {
+  const response = await api.post("/api/v1/robot/cancel/task", { sn });
+  return response.data;
+};
+
+/**
+ * Dispatch a task to a robot
+ * @param taskType Type of task (goto, patrol, etc)
+ * @param sn Robot serial number
+ * @param params Task parameters
+ */
+export const dispatchTask = async (taskType: string, sn: string, params: any) => {
+  const response = await api.post("/api/v1/robot/dispatch/task", {
+    task_type: taskType,
+    sn,
+    ...params,
+  });
+  return response.data;
+};
+
+/**
+ * Cancel ongoing movement (AMR/Fielder)
+ */
+export const cancelMove = async () => {
+  const response = await api.post("/api/v1/robot/control/cancel");
+  return response.data;
+};
+
+// ============================================================================
+// TEMI ROBOT CONTROL APIs
+// ============================================================================
+
+/**
+ * Move Temi robot to a POI
+ * @param sn Robot serial number
+ * @param poiName Target POI name
+ */
+export const moveTemiToPOI = async (sn: string, poiName: string) => {
+  const response = await api.post("/api/v1/robot/temi/command/goto", {
+    sn,
+    location: poiName,
+  });
+  return response.data;
+};
+
+/**
+ * Stop Temi robot
+ * @param sn Robot serial number
+ */
+export const stopTemi = async (sn: string) => {
+  const response = await api.post("/api/v1/robot/temi/command/stop", { sn });
+  return response.data;
+};
+
+/**
+ * Manual control for Temi robot
+ * @param sn Robot serial number
+ * @param linearVelocity Linear velocity (-1 to 1)
+ * @param angularVelocity Angular velocity (-1 to 1)
+ */
+export const controlTemiManual = async (
+  sn: string,
+  linearVelocity: number,
+  angularVelocity: number
+) => {
+  const response = await api.post("/api/v1/robot/temi/command/manual_control", {
+    sn,
+    linear: linearVelocity,
+    angular: angularVelocity,
+  });
+  return response.data;
+};
+
+/**
+ * Make Temi robot speak (TTS)
+ * @param sn Robot serial number
+ * @param text Text to speak
+ */
+export const makeTemiSpeak = async (sn: string, text: string) => {
+  const response = await api.post("/api/v1/robot/temi/command/tts", {
+    sn,
+    text,
+  });
+  return response.data;
+};
+
+/**
+ * Tilt Temi's head
+ * @param sn Robot serial number
+ * @param angle Tilt angle
+ */
+export const tiltTemiHead = async (sn: string, angle: number) => {
+  const response = await api.post("/api/v1/robot/temi/command/tilt", {
+    sn,
+    angle,
+  });
+  return response.data;
+};
+
+// ============================================================================
+// AMR/FIELDER ROBOT CONTROL APIs
+// ============================================================================
+
+/**
+ * Move AMR/Fielder to coordinates
+ * @param sn Robot serial number
+ * @param x X coordinate
+ * @param y Y coordinate
+ * @param yaw Yaw angle (optional)
+ */
+export const moveAMRToCoordinates = async (
+  sn: string,
+  x: number,
+  y: number,
+  yaw?: number
+) => {
+  const response = await api.post("/api/v1/robot/control/move", {
+    sn,
+    x,
+    y,
+    yaw: yaw || 0,
+  });
+  return response.data;
+};
+
+/**
+ * Move AMR/Fielder to POI
+ * @param sn Robot serial number
+ * @param poiName Target POI name
+ */
+export const moveAMRToPOI = async (sn: string, poiName: string) => {
+  const response = await api.post("/api/v1/robot/control/goto", {
+    sn,
+    location: poiName,
+  });
+  return response.data;
+};
+
+/**
+ * Manual control for AMR/Fielder
+ * @param sn Robot serial number
+ * @param linearVelocity Linear velocity
+ * @param angularVelocity Angular velocity
+ */
+export const controlAMRManual = async (
+  sn: string,
+  linearVelocity: number,
+  angularVelocity: number
+) => {
+  const response = await api.post("/api/v1/robot/control/manual", {
+    sn,
+    linear_velocity: linearVelocity,
+    angular_velocity: angularVelocity,
+  });
+  return response.data;
+};
+
+/**
+ * Stop AMR/Fielder movement
+ * @param sn Robot serial number
+ */
+export const stopAMR = async (sn: string) => {
+  const response = await api.post("/api/v1/robot/control/stop", { sn });
+  return response.data;
+};
+
+/**
+ * Send manual control command (generic for both robot types)
+ * @param linear Linear velocity
+ * @param angular Angular velocity
+ * @param sn Robot serial number (optional, mainly for Temi)
+ */
+export const sendManualControl = async (
+  linear: number,
+  angular: number,
+  sn?: string
+) => {
+  if (sn) {
+    // Temi robot
+    return controlTemiManual(sn, linear, angular);
+  } else {
+    // AMR/Fielder robot - might need different endpoint
+    const response = await api.post("/api/v1/robot/control/manual", {
+      linear_velocity: linear,
+      angular_velocity: angular,
+    });
+    return response.data;
+  }
+};
+
+/**
+ * Enable remote control mode (mainly for AMR/Fielder)
+ */
+export const enableRemoteControl = async () => {
+  const response = await api.post("/api/v1/robot/control/enable_remote");
+  return response.data;
+};
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+/**
+ * Generic robot movement to POI (auto-detects robot type)
+ * @param sn Robot serial number
+ * @param poiName Target POI name
+ * @param robotType Robot type (TEMI, AMR, FIELDER)
+ */
+export const moveToPOI = async (
+  sn: string,
+  poiName: string,
+  robotType: string
+) => {
+  if (robotType.toUpperCase() === "TEMI") {
+    return moveTemiToPOI(sn, poiName);
+  } else {
+    return moveAMRToPOI(sn, poiName);
+  }
+};
+
+/**
+ * Generic robot stop (auto-detects robot type)
+ * @param sn Robot serial number
+ * @param robotType Robot type (TEMI, AMR, FIELDER)
+ */
+export const stopRobot = async (sn: string, robotType: string) => {
+  if (robotType.toUpperCase() === "TEMI") {
+    return stopTemi(sn);
+  } else {
+    return stopAMR(sn);
+  }
+};
+
+/**
+ * Generic manual control (auto-detects robot type)
+ * @param sn Robot serial number
+ * @param linearVelocity Linear velocity
+ * @param angularVelocity Angular velocity
+ * @param robotType Robot type (TEMI, AMR, FIELDER)
+ */
+export const controlRobotManual = async (
+  sn: string,
+  linearVelocity: number,
+  angularVelocity: number,
+  robotType: string
+) => {
+  if (robotType.toUpperCase() === "TEMI") {
+    return controlTemiManual(sn, linearVelocity, angularVelocity);
+  } else {
+    return controlAMRManual(sn, linearVelocity, angularVelocity);
+  }
+};
+
+/**
+ * Alias for getRobotList (for backward compatibility)
+ */
+export const getRegisteredRobots = getRobotList;
+
+/**
+ * Move robot to charging station
+ * @param sn Robot serial number
+ * @param robotType Robot type
+ */
+export const moveToCharge = async (sn: string, robotType: string) => {
+  // Use the appropriate method based on robot type
+  if (robotType.toUpperCase() === "TEMI") {
+    return moveTemiToPOI(sn, "home_base");
+  } else {
+    return moveAMRToPOI(sn, "charging_station");
+  }
+};
+
+/**
+ * Get robot location/position
+ * @param sn Robot serial number
+ */
+export const getRobotLocation = async (sn: string) => {
+  const status = await getRobotStatus(sn);
+  return status.robotStatus?.position || { x: 0, y: 0, yaw: 0 };
+};
+
+/**
+ * Check API health status
+ */
+export const checkHealth = async () => {
+  const response = await api.get("/api/health");
+  return response.data;
+};
+
+/**
+ * Create WebSocket connection for robot status updates
+ * @param sn Robot serial number
+ */
+export const createRobotStatusWebSocket = (sn: string) => {
+  const wsUrl = API_BASE_URL.replace('http://', 'ws://').replace('https://', 'wss://');
+  return new WebSocket(`${wsUrl}/ws/robot/${sn}`);
+};
+
+// ============================================================================
+// EXPORT DEFAULT API OBJECT
+// ============================================================================
+
+export default {
+  // Robot Management
+  getRobotList,
+  getRegisteredRobots,
+  getRobotStatus,
+  registerRobot,
+  updateRobot,
+  deleteRobot,
+
+  // POI Management
+  getPOIList,
+  addPOI,
+  getTemiLocations,
+  setPOI,
+
+  // Task Management
+  getTaskHistory,
+  getTaskDetails,
+  cancelTask,
+  dispatchTask,
+  cancelMove,
+
+  // Temi Control
+  moveTemiToPOI,
+  stopTemi,
+  controlTemiManual,
+  makeTemiSpeak,
+  tiltTemiHead,
+
+  // AMR/Fielder Control
+  moveAMRToCoordinates,
+  moveAMRToPOI,
+  controlAMRManual,
+  stopAMR,
+  sendManualControl,
+  enableRemoteControl,
+
+  // Utility Functions
+  moveToPOI,
+  stopRobot,
+  controlRobotManual,
+  
+  // Additional Utility Methods
+  moveToCharge,
+  getRobotLocation,
+  checkHealth,
+  createRobotStatusWebSocket,
+};
