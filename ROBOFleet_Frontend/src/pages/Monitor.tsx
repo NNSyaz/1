@@ -124,6 +124,23 @@ const Monitor: React.FC = () => {
             const status = await api.getRobotStatus(r.data.sn);
             const isOnline = status?.robotStatus?.state >= 2;
 
+            // ✅ GET REAL POSITION FROM API
+            const position = status?.position || status?.robotStatus?.position || { x: 0, y: 0 };
+            
+            // Convert to map coordinates (0-100 range for percentage positioning)
+            // If coordinates are in meters, scale them appropriately
+            const mapX = position.x !== 0 ? 50 + (position.x * 5) : 50;  // Scale: 1m = 5% of map
+            const mapY = position.y !== 0 ? 50 - (position.y * 5) : 50;  // Invert Y-axis for display
+            
+            // Keep coordinates within bounds
+            const boundedX = Math.max(5, Math.min(95, mapX));
+            const boundedY = Math.max(5, Math.min(95, mapY));
+
+            console.log(`Robot ${r.data.sn} position:`, {
+              raw: position,
+              mapped: { x: boundedX, y: boundedY }
+            });
+
             return {
               id: r.data.sn,
               name: r.nickname || `Robot ${r.data.sn}`,
@@ -131,14 +148,15 @@ const Monitor: React.FC = () => {
               battery: status?.robotStatus?.power ?? 0,
               lastSeen: new Date().toISOString(),
               position: {
-                x: 50 + Math.random() * 40,
-                y: 30 + Math.random() * 40,
+                x: boundedX,  // ✅ REAL COORDINATES
+                y: boundedY,  // ✅ REAL COORDINATES
               },
               signal: isOnline ? 85 + Math.random() * 15 : 0,
               task: isOnline ? "Idle" : "Offline",
               sn: r.data.sn,
             };
           } catch (e) {
+            console.error(`Failed to get status for ${r.data.sn}:`, e);
             return {
               id: r.data.sn,
               name: r.nickname || `Robot ${r.data.sn}`,

@@ -67,11 +67,25 @@ export const api = {
         { headers: getAuthHeaders() }
       );
       if (response.status === 404) {
-        return { robotStatus: { state: 0, power: 0, areaName: "Unknown" } };
+        return { 
+          robotStatus: { state: 0, power: 0, areaName: "Unknown" },
+          position: { x: 0, y: 0, yaw: 0 }
+        };
       }
-      return handleResponse<any>(response);
-    } catch {
-      return { robotStatus: { state: 0, power: 0, areaName: "Unknown" } };
+      const data = await handleResponse<any>(response);
+      
+      // Ensure position exists in response
+      if (!data.position && data.robotStatus?.position) {
+        data.position = data.robotStatus.position;
+      }
+      
+      return data;
+    } catch (error) {
+      console.error(`Failed to get robot status for ${sn}:`, error);
+      return { 
+        robotStatus: { state: 0, power: 0, areaName: "Unknown" },
+        position: { x: 0, y: 0, yaw: 0 }
+      };
     }
   },
 

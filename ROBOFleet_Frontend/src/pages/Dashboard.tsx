@@ -113,12 +113,27 @@ const Dashboard = () => {
             // Check WebSocket data first
             const wsData = robotStatusService.getLastData();
 
-            const status: "Online" | "Offline" | "Idle" | "Charging" =
-              wsData?.status === "charging"
-                ? "Charging"
-                : wsData?.status === "online" || wsData?.status === "active"
-                ? "Online"
-                : "Offline";
+            // ✅ IMPROVED STATUS LOGIC
+            let status: "Online" | "Offline" | "Idle" | "Charging";
+            
+            if (wsData?.status === "charging") {
+              status = "Charging";
+            } else if (wsData?.status === "idle") {
+              status = "Idle";
+            } else if (wsData?.status === "online" || wsData?.status === "active") {
+              status = "Online";
+            } else if (st?.state >= 2) {
+              // Fallback to API data if WebSocket data not available
+              status = "Online";
+            } else {
+              status = "Offline";
+            }
+
+            console.log(`Dashboard - Robot ${r.data.sn} status:`, {
+              wsStatus: wsData?.status,
+              apiState: st?.state,
+              finalStatus: status
+            });
 
             const statusColor =
               status === "Charging"

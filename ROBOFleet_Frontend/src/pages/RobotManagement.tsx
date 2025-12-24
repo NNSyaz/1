@@ -94,6 +94,7 @@ const RobotManagement: React.FC = () => {
     nickname: "",
     sn: "",
     ip: "",
+    model: "AMR", 
   });
   const [editForm, setEditForm] = useState<Partial<Robot>>({});
   const [connectionStatus, setConnectionStatus] = useState<{
@@ -114,14 +115,24 @@ const RobotManagement: React.FC = () => {
       }
       const transformed: Robot[] = registeredRobots.map((r) => {
         const ws = robotStatusService.getLastData();
-        const isOnline =
-          ws && ["active", "online", "charging", "idle"].includes(ws.status);
-        const status =
-          ws?.status === "charging"
-            ? "Charging"
-            : isOnline
-            ? "Online"
-            : "Offline";
+        
+        // ✅ IMPROVED STATUS LOGIC
+        let status: string;
+        
+        if (ws?.status === "charging") {
+          status = "Charging";
+        } else if (ws?.status === "idle") {
+          status = "Idle";
+        } else if (ws?.status === "online" || ws?.status === "active") {
+          status = "Online";
+        } else {
+          status = "Offline";
+        }
+
+        console.log(`RobotManagement - Robot ${r.data.sn} status:`, {
+          wsStatus: ws?.status,
+          finalStatus: status
+        });
         const task =
           ws?.status === "charging"
             ? "Charging"
@@ -248,7 +259,7 @@ const RobotManagement: React.FC = () => {
       if (res.status === 200) {
         await fetchRobots();
         setShowAddRobot(false);
-        setNewRobotForm({ name: "", nickname: "", sn: "", ip: "" });
+        setNewRobotForm({ name: "", nickname: "", sn: "", ip: "", model: "AMR" });
       } else alert(res.msg || "Failed to register");
     } catch (err: any) {
       alert(err.message || "Failed to register");
@@ -705,6 +716,23 @@ const RobotManagement: React.FC = () => {
                 placeholder="IP Address"
                 className="w-full border rounded px-3 py-2"
               />
+              {/* ✅ ADD THIS MODEL SELECTOR */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Robot Model
+                </label>
+                <select
+                  value={newRobotForm.model}
+                  onChange={(e) =>
+                    setNewRobotForm({ ...newRobotForm, model: e.target.value })
+                  }
+                  className="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="AMR">AMR</option>
+                  <option value="FIELDER">Fielder</option>
+                  <option value="TEMI">Temi</option>
+                </select>
+              </div>
             </div>
             <div className="flex gap-2 mt-4">
               <button

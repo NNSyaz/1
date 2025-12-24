@@ -4,8 +4,6 @@ import Dashboard from "../pages/Dashboard";
 import RobotManagement from "../pages/RobotManagement";
 import Monitor from "../pages/Monitor";
 import Tasks from "../pages/Tasks";
-import Map from "../pages/Map";
-import Locations from "../pages/Locations";
 import Settings from "../pages/Settings";
 
 interface MainProps {
@@ -24,10 +22,6 @@ const Main = ({ activePage }: MainProps) => {
       return <Analyze />;
     case "tasks":
       return <Tasks />;
-    case "map":
-      return <Map />;
-    case "locations":
-      return <Locations />;
     case "setting":
       return <Settings />;
     default:

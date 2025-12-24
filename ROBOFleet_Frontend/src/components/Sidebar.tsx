@@ -6,8 +6,7 @@ import {
   Monitor,
   Settings2Icon,
   ListTodo,
-  Map as MapIcon,
-  MapPin,
+
 } from "lucide-react";
 import roboLogo from "../assets/roboLogo.png";
 
@@ -22,8 +21,6 @@ const Sidebar = ({ activePage, setActivePage }: SidebarProps) => {
     { id: "robot", icon: Bot, label: "Robots" },
     { id: "monitor", icon: Monitor, label: "Monitor" },
     { id: "tasks", icon: ListTodo, label: "Tasks" },
-    { id: "map", icon: MapIcon, label: "Map" },
-    { id: "locations", icon: MapPin, label: "Locations" },
     { id: "analyze", icon: GitGraph, label: "Analyze" },
     { id: "setting", icon: Settings2Icon, label: "Settings" },
   ];
