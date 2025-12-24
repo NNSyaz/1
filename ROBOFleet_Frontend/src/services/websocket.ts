@@ -16,7 +16,7 @@ interface WebSocketService {
   isConnecting: boolean;
 }
 
-const WS_URL = "ws://192.168.0.142:8000"; // Match your backend
+const WS_URL = "ws://192.168.0.183:8000"; // Match your backend
 
 export const wsService: WebSocketService = {
   ws: null,

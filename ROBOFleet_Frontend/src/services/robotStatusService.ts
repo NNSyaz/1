@@ -16,7 +16,7 @@ class RobotStatusService {
   private isConnecting = false;
   private shouldReconnect = true;
   private lastData: any = null;
-  private WS_URL = "ws://192.168.0.142:8000";
+  private WS_URL = "ws://192.168.0.183:8000";
 
   connect() {
     if (this.ws?.readyState === WebSocket.OPEN || this.isConnecting) {

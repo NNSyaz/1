@@ -1,449 +1,256 @@
-// src/services/api.ts - FIXED VERSION
+// src/services/api.ts - COMPLETE VERSION
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://192.168.0.183:8000";
+const WS_BASE_URL = API_BASE_URL.replace("http", "ws");
 
-// Configuration - Change this to match your backend server
-const API_BASE_URL = "http://192.168.0.142:8000";
-const WS_BASE_URL = "ws://192.168.0.142:8000";
+const getAuthHeaders = () => ({
+  "Content-Type": "application/json",
+});
 
-// Helper function to get auth headers
-const getAuthHeaders = () => {
-  const loginToken = localStorage.getItem("loginToken");
-  return {
-    "Content-Type": "application/json",
-    ...(loginToken && { Authorization: `Bearer ${loginToken}` }),
-  };
-};
-
-// Helper function to handle API responses
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-
     try {
       const errorData = await response.json();
       errorMessage = errorData.msg || errorData.error || errorMessage;
-    } catch {
-      // If JSON parsing fails, use the default error message
-    }
-
+    } catch {}
     throw new Error(errorMessage);
   }
-
   return response.json();
 }
 
 export const api = {
-  // ============ Authentication ============
-
-  async getAccessToken() {
+  // ============ Health & Connection ============
+  async checkHealth() {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/get/access_token`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
-      );
-      return handleResponse<{ accessToken: string; expiresIn: number }>(
-        response
-      );
-    } catch (error) {
-      console.error("Failed to get access token:", error);
-      throw error;
+      const response = await fetch(`${API_BASE_URL}/health`);
+      return response.ok;
+    } catch {
+      return false;
     }
   },
 
-  // ============ Robot Registration & List ============
-
+  // ============ Robot Management ============
   async getRegisteredRobots() {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/get/robot_list`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/api/v1/robot/get/robot_list`, {
+        headers: getAuthHeaders(),
+      });
       const data = await handleResponse<any>(response);
-      // Handle both array and object responses
       return Array.isArray(data) ? data : data.robots || [];
     } catch (error) {
       console.error("Failed to get registered robots:", error);
-      // Return empty array instead of throwing to prevent app crash
       return [];
     }
   },
 
-  async registerRobot(payload: {
-    name: string;
-    nickname: string;
-    sn: string;
-    ip: string;
-  }) {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/register`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify(payload),
-      });
-      return handleResponse<{ status: number; msg: string }>(response);
-    } catch (error) {
-      console.error("Failed to register robot:", error);
-      throw error;
-    }
+  async registerRobot(payload: { name: string; nickname: string; sn: string; ip: string; model: string }) {
+    const response = await fetch(`${API_BASE_URL}/api/v1/robot/register`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<{ status: number; msg: string }>(response);
   },
 
-  // ============ Robot Status ============
+  async deleteRobot(nickname: string) {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/robot/delete/robot_name?name=${encodeURIComponent(nickname)}`,
+      { headers: getAuthHeaders() }
+    );
+    return handleResponse<any>(response);
+  },
 
   async getRobotStatus(sn: string) {
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/get/robot_status?sn=${encodeURIComponent(
-          sn
-        )}`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
+        `${API_BASE_URL}/api/v1/robot/get/robot_status?sn=${encodeURIComponent(sn)}`,
+        { headers: getAuthHeaders() }
       );
-
-      // If 404, return default offline status
       if (response.status === 404) {
-        console.warn(
-          `Robot status not found for ${sn}, returning offline status`
-        );
-        return {
-          robotStatus: {
-            state: 0, // Offline
-            power: 0,
-            areaName: "Unknown",
-          },
-        };
+        return { robotStatus: { state: 0, power: 0, areaName: "Unknown" } };
       }
-
       return handleResponse<any>(response);
-    } catch (error) {
-      console.error(`Failed to get robot status for ${sn}:`, error);
-      // Return default offline status on error
-      return {
-        robotStatus: {
-          state: 0,
-          power: 0,
-          areaName: "Unknown",
-        },
-      };
+    } catch {
+      return { robotStatus: { state: 0, power: 0, areaName: "Unknown" } };
     }
   },
 
-  // ============ POI Management ============
+  async getRobotLocation(sn: string) {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/robot/get/robot_location/${encodeURIComponent(sn)}`,
+      { headers: getAuthHeaders() }
+    );
+    return handleResponse<any>(response);
+  },
 
+  // ============ POI Management ============
   async getPOIList() {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/get/poi_list`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
-      );
+      const response = await fetch(`${API_BASE_URL}/api/v1/robot/get/poi_list`, {
+        headers: getAuthHeaders(),
+      });
       const data = await handleResponse<any>(response);
       return Array.isArray(data) ? data : data.pois || [];
-    } catch (error) {
-      console.error("Failed to get POI list:", error);
+    } catch {
       return [];
     }
   },
 
+  async setPOI(name: string) {
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/robot/set/poi?name=${encodeURIComponent(name)}`,
+      { headers: getAuthHeaders() }
+    );
+    return handleResponse<any>(response);
+  },
+
   async getPOIDetails(poiName: string) {
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/get/poi_details?poi=${encodeURIComponent(
-          poiName
-        )}`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
-      );
-      return handleResponse<any>(response);
-    } catch (error) {
-      console.error(`Failed to get POI details for ${poiName}:`, error);
-      throw error;
-    }
+    const response = await fetch(
+      `${API_BASE_URL}/api/v1/robot/get/poi_details?poi=${encodeURIComponent(poiName)}`,
+      { headers: getAuthHeaders() }
+    );
+    return handleResponse<any>(response);
   },
 
-  async setPOILocation(name: string) {
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/set/poi?name=${encodeURIComponent(name)}`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
-      );
-      return handleResponse<string>(response);
-    } catch (error) {
-      console.error("Failed to set POI location:", error);
-      throw error;
-    }
-  },
-
-  // ============ Robot Movement & Control ============
-
+  // ============ Robot Movement ============
   async moveToPOI(poiName: string) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/move/poi?name=${encodeURIComponent(
-          poiName
-        )}`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-          signal: controller.signal,
-        }
+        `${API_BASE_URL}/api/v1/robot/move/poi?name=${encodeURIComponent(poiName)}`,
+        { headers: getAuthHeaders(), signal: controller.signal }
       );
 
       clearTimeout(timeoutId);
-
-      // ✅ Return the response even if it contains an error status
-      const data = await response.json();
-      return data;
+      return await response.json();
     } catch (error: any) {
-      console.error(`Failed to move to POI ${poiName}:`, error);
-
       if (error.name === "AbortError") {
-        return {
-          status: 504,
-          msg: "Request timeout - robot may not be responding",
-        };
+        return { status: 504, msg: "Request timeout" };
       }
-
-      return {
-        status: 500,
-        msg: error.message || "Failed to connect to robot",
-      };
+      return { status: 500, msg: error.message || "Failed to connect" };
     }
   },
 
   async moveToCharge() {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       const response = await fetch(`${API_BASE_URL}/api/v1/robot/move/charge`, {
-        method: "GET",
         headers: getAuthHeaders(),
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
-
-      // ✅ Return the response even if it contains an error status
-      const data = await response.json();
-      return data;
+      return await response.json();
     } catch (error: any) {
-      console.error("Failed to move to charge:", error);
-
       if (error.name === "AbortError") {
-        return {
-          status: 504,
-          msg: "Request timeout - robot may not be responding",
-        };
+        return { status: 504, msg: "Request timeout" };
       }
-
-      return {
-        status: 500,
-        msg: error.message || "Failed to connect to robot",
-      };
+      return { status: 500, msg: error.message || "Failed to connect" };
     }
   },
 
-  async testRobotConnection() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/hello`, {
-        method: "GET",
-        headers: getAuthHeaders(),
-      });
+  async moveToCoordinate(x: number, y: number, yaw: number, sn?: string) {
+    const endpoint = sn
+      ? `${API_BASE_URL}/api/v1/robot/temi/command/move_coordinate`
+      : `${API_BASE_URL}/edge/v1/robot/move/coordinate`;
 
-      if (!response.ok) {
-        return { connected: false, error: "Server not responding" };
-      }
+    const body = sn
+      ? { sn, x, y, yaw }
+      : { target_x: x, target_y: y, target_ori: yaw };
 
-      return { connected: true, error: null };
-    } catch (error: any) {
-      return { connected: false, error: error.message };
-    }
-  },
-
-  // FIXED: Delete Robot - now properly includes robot ID in path
-  async deleteRobot(nickname: string) {
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/delete/robot_name?name=${encodeURIComponent(
-          nickname
-        )}`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
-      );
-      return handleResponse<any>(response);
-    } catch (error) {
-      console.error(`Failed to delete robot ${nickname}:`, error);
-      throw error;
-    }
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+    return handleResponse<any>(response);
   },
 
   async cancelMove() {
+    const response = await fetch(`${API_BASE_URL}/api/v1/robot/move/cancel`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<any>(response);
+  },
+
+  async stopRobot(sn: string) {
+    const response = await fetch(`${API_BASE_URL}/api/v1/robot/temi/command/stop`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ sn }),
+    });
+    return handleResponse<any>(response);
+  },
+
+  // ============ Tasks ============
+  async dispatchTask(taskType: string, robotSn: string | null, params: any) {
+    const response = await fetch(`${API_BASE_URL}/api/v1/task/dispatch`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ task_type: taskType, robot_sn: robotSn, ...params }),
+    });
+    return handleResponse<any>(response);
+  },
+
+  async getTaskHistory() {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/move/cancel`, {
-        method: "GET",
+      const response = await fetch(`${API_BASE_URL}/api/v1/robot/get/task_history`, {
         headers: getAuthHeaders(),
       });
-      return handleResponse<any>(response);
-    } catch (error) {
-      console.error("Failed to cancel move:", error);
-      throw error;
+      const data = await handleResponse<any>(response);
+      return Array.isArray(data) ? data : data.tasks || [];
+    } catch {
+      return [];
     }
   },
 
-  async moveRobot() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/move`, {
-        method: "GET",
-        headers: getAuthHeaders(),
-      });
-      return handleResponse<any>(response);
-    } catch (error) {
-      console.error("Failed to move robot:", error);
-      throw error;
-    }
+  // ============ Manual Control ============
+  async sendManualControl(linear: number, angular: number, sn?: string) {
+    const endpoint = sn
+      ? `${API_BASE_URL}/api/v1/robot/temi/command/manual_control`
+      : `${API_BASE_URL}/edge/v1/robot/control/manual`;
+
+    const body = sn ? { sn, linear, angular } : { linear, angular };
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+    return handleResponse<any>(response);
   },
 
-  // ============ Robot Status & Pose ============
-
-  async getCurrentPose() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/test/pose`, {
-        method: "GET",
-        headers: getAuthHeaders(),
-      });
-      return handleResponse<any>(response);
-    } catch (error) {
-      console.error("Failed to get current pose:", error);
-      throw error;
-    }
+  async enableRemoteControl() {
+    const response = await fetch(`${API_BASE_URL}/api/v1/robot/control/enable_remote`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<any>(response);
   },
 
-  // ============ Robot Settings ============
-
-  async setControlMode(mode: string) {
+  // ============ Temi Specific ============
+  async getTemiLocations(sn: string) {
     try {
       const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/set/control_mode?mode=${encodeURIComponent(
-          mode
-        )}`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
+        `${API_BASE_URL}/api/v1/robot/temi/locations?sn=${encodeURIComponent(sn)}`,
+        { headers: getAuthHeaders() }
       );
       return handleResponse<any>(response);
-    } catch (error) {
-      console.error("Failed to set control mode:", error);
-      throw error;
+    } catch {
+      return [];
     }
   },
 
-  async setVelocity(velocity: string) {
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/robot/set/velocity?vel=${encodeURIComponent(
-          velocity
-        )}`,
-        {
-          method: "GET",
-          headers: getAuthHeaders(),
-        }
-      );
-      return handleResponse<any>(response);
-    } catch (error) {
-      console.error("Failed to set velocity:", error);
-      throw error;
-    }
-  },
-
-  // ============ Jack Control ============
-
-  async jackUp() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/jack/up`, {
-        method: "GET",
-        headers: getAuthHeaders(),
-      });
-      return handleResponse<any>(response);
-    } catch (error) {
-      console.error("Failed to raise jack:", error);
-      throw error;
-    }
-  },
-
-  async jackDown() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/robot/jack/down`, {
-        method: "GET",
-        headers: getAuthHeaders(),
-      });
-      return handleResponse<any>(response);
-    } catch (error) {
-      console.error("Failed to lower jack:", error);
-      throw error;
-    }
+  async makeTemiSpeak(sn: string, text: string) {
+    return this.dispatchTask("speak", sn, { text });
   },
 
   // ============ WebSocket Connections ============
-
-  createPoseWebSocket(
-    onMessage: (data: any) => void,
-    onError?: (error: any) => void
-  ): WebSocket {
-    const ws = new WebSocket(`${WS_BASE_URL}/api/v1/robot/ws/current_pose`);
-
-    ws.onopen = () => {
-      console.log("Pose WebSocket connected");
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        onMessage(data);
-      } catch (error) {
-        console.error("Failed to parse pose WebSocket message:", error);
-        if (onError) onError(error);
-      }
-    };
-
-    ws.onerror = (error) => {
-      console.error("Pose WebSocket error:", error);
-      if (onError) onError(error);
-    };
-
-    ws.onclose = (event) => {
-      console.log(`Pose WebSocket closed: ${event.code} - ${event.reason}`);
-    };
-
-    return ws;
-  },
-
-  // FIXED: Corrected WebSocket endpoint path
   createRobotStatusWebSocket(
-    onMessage: (data: {
-      status: string;
-      battery: number;
-      last_poi: string;
-    }) => void,
+    onMessage: (data: { status: string; battery: number; last_poi: string }) => void,
     onError?: (error: any) => void
   ): WebSocket {
     let reconnectAttempts = 0;
@@ -451,9 +258,7 @@ export const api = {
     const reconnectDelay = 3000;
 
     const connect = (): WebSocket => {
-      const ws = new WebSocket(
-        `${WS_BASE_URL}/api/v1/robot/ws/get/robot_status`
-      );
+      const ws = new WebSocket(`${WS_BASE_URL}/api/v1/robot/ws/get/robot_status`);
 
       ws.onopen = () => {
         console.log("Robot status WebSocket connected");
@@ -463,7 +268,6 @@ export const api = {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log("Robot status received:", data);
           onMessage(data);
         } catch (error) {
           console.error("Failed to parse robot status message:", error);
@@ -477,21 +281,10 @@ export const api = {
       };
 
       ws.onclose = (event) => {
-        console.log(
-          `Robot status WebSocket closed: ${event.code} - ${event.reason}`
-        );
-
-        // ✅ FIX: Auto-reconnect on unexpected close
+        console.log(`Robot status WebSocket closed: ${event.code}`);
         if (event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
           reconnectAttempts++;
-          console.log(
-            `Reconnecting... Attempt ${reconnectAttempts}/${maxReconnectAttempts}`
-          );
-          setTimeout(() => {
-            if (ws.readyState === WebSocket.CLOSED) {
-              connect();
-            }
-          }, reconnectDelay);
+          setTimeout(() => connect(), reconnectDelay);
         }
       };
 
@@ -500,24 +293,7 @@ export const api = {
 
     return connect();
   },
-
-  // ============ Utility Functions ============
-
-  async testConnection() {
-    try {
-      const response = await fetch(`${API_BASE_URL}/hello`, {
-        method: "GET",
-      });
-      return handleResponse<string>(response);
-    } catch (error) {
-      console.error("Connection test failed:", error);
-      throw error;
-    }
-  },
 };
 
-// Export base URLs for direct use if needed
 export { API_BASE_URL, WS_BASE_URL };
-
-// Make this a default export as well
 export default api;
