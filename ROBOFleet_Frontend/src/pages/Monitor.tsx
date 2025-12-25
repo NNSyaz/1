@@ -34,7 +34,6 @@ interface Robot {
   signal?: number;
   task?: string;
   sn?: string;
-  model?: string; // Added for Fielder identification
 }
 
 interface RegisteredRobot {
@@ -42,11 +41,9 @@ interface RegisteredRobot {
     sn: string;
     ip?: string;
     time_created?: number;
-    model?: string; // Added for robot type identification
   };
   nickname: string;
   name?: string;
-  model?: string; // Can be at top level too
 }
 
 /* ---------- Helpers ---------------------------------------------------- */
@@ -167,7 +164,6 @@ const Monitor: React.FC = () => {
               signal: isOnline ? 85 + Math.random() * 15 : 0,
               task: isOnline ? "Idle" : "Offline",
               sn: r.data.sn,
-              model: r.data?.model || r.model || "AMR", // Get model from registration data
             };
           } catch (e) {
             console.error(`Failed to get status for ${r.data.sn}:`, e);
@@ -181,7 +177,6 @@ const Monitor: React.FC = () => {
               signal: 0,
               task: "Offline",
               sn: r.data.sn,
-              model: r.data?.model || r.model || "AMR", // Get model from registration data
             };
           }
         })
@@ -320,80 +315,23 @@ const Monitor: React.FC = () => {
 
   const handleDownloadMapFromRobot = async () => {
     try {
-      setLoading(true);
-      
-      // Find Fielder robot
-      const fielderRobot = robots.find(r => 
-        r.model?.toUpperCase() === "FIELDER" || r.model?.toUpperCase() === "AMR"
-      );
-      
-      if (!fielderRobot) {
-        alert("❌ No Fielder robot found. Please register a Fielder robot first.");
-        setLoading(false);
-        return;
-      }
-      
-      // Get robot IP
-      let robotIP = "192.168.0.250"; // Default Fielder IP
-      try {
-        robotIP = await api.getRobotIP(fielderRobot.sn || "");
-      } catch (err) {
-        console.warn("Using default Fielder IP:", robotIP);
-      }
-      
-      console.log(`📥 Fetching map from Fielder at ${robotIP}...`);
-      
-      // Get list of maps
-      const maps = await api.getFielderMaps(robotIP);
-      
-      if (!maps || maps.length === 0) {
-        alert("❌ No maps found on Fielder robot. Please create a map first using the robot's mapping feature.");
-        setLoading(false);
-        return;
-      }
-      
-      // Use the first map (most recent or active)
-      const activeMap = maps[0];
-      console.log(`📍 Using map: ${activeMap.map_name} (ID: ${activeMap.id})`);
-      
-      // Download map image using the image_url from the API
-      const imageUrl = `http://${robotIP}:8090/maps/${activeMap.id}.png`;
-      const response = await fetch(imageUrl);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to download map image: ${response.status}`);
-      }
-      
+      // This would fetch the map from the Fielder robot
+      // For now, this is a placeholder - you'll need to implement the actual API call
+      const response = await fetch("http://192.168.0.250:8090/map/image");
       const blob = await response.blob();
+      const imageUrl = URL.createObjectURL(blob);
+      setMapImage(imageUrl);
       
-      // Convert to base64 for storage
+      // Convert to base64 for localStorage
       const reader = new FileReader();
       reader.onload = () => {
         const base64 = reader.result as string;
-        setMapImage(base64);
         localStorage.setItem("fleet_map_image", base64);
-        
-        // Save metadata
-        localStorage.setItem("fleet_map_metadata", JSON.stringify({
-          name: activeMap.map_name,
-          id: activeMap.id,
-          origin_x: activeMap.grid_origin_x,
-          origin_y: activeMap.grid_origin_y,
-          resolution: activeMap.grid_resolution || 0.05,
-          downloaded_at: new Date().toISOString(),
-          robot_ip: robotIP,
-          robot_name: fielderRobot.name
-        }));
-        
-        alert(`✅ Map "${activeMap.map_name}" downloaded successfully from ${fielderRobot.name}!`);
       };
       reader.readAsDataURL(blob);
-      
-    } catch (error: any) {
+    } catch (error) {
       console.error("Failed to download map from robot:", error);
-      alert(`❌ Failed to download map: ${error.message}\n\nMake sure:\n1. The Fielder robot is online\n2. The robot is accessible at the configured IP\n3. The robot has at least one saved map`);
-    } finally {
-      setLoading(false);
+      alert("Failed to download map from robot. Make sure the robot is online and accessible.");
     }
   };
 
