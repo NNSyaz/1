@@ -1,4 +1,4 @@
-// src/components/modals/RobotControlModal.tsx - COMPLETE FIX
+// src/components/modals/RobotControlModal.tsx - FIXED VERSION
 import React, { useState, useEffect, useRef } from "react";
 import { X, MapPin, RefreshCw, Save } from "lucide-react";
 import api from "../../services/api";
@@ -22,7 +22,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   onSuccess,
 }) => {
   const [activeTab, setActiveTab] = useState<"navigation" | "manual" | "tts">("navigation");
-  const [allPOIs, setAllPOIs] = useState<any[]>([]); // ✅ Unified POI list for all robots
+  const [allPOIs, setAllPOIs] = useState<any[]>([]);
   const [selectedPoi, setSelectedPoi] = useState("");
   const [speed, setSpeed] = useState(1.0);
   const [loading, setLoading] = useState(false);
@@ -42,7 +42,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   
   const isTemi = robot.model?.toUpperCase() === "TEMI";
   
-  // ✅ KEYBOARD CONTROL IMPLEMENTATION
+  // Keyboard control implementation
   const sendControlCommand = async (linear: number, angular: number) => {
     const now = Date.now();
     if (now - lastCommandTime.current < 100) {
@@ -54,7 +54,15 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       if (isTemi) {
         await api.controlTemiManual(robot.sn, linear, angular);
       } else {
-        await api.controlAMRManual(robot.sn, linear, angular);
+        // ✅ FIX: Use correct endpoint for AMR/Fielder
+        await fetch('http://192.168.0.183:8000/api/v1/robot/control/manual', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            linear_velocity: linear, 
+            angular_velocity: angular 
+          })
+        });
       }
     } catch (error) {
       console.error("Control command error:", error);
@@ -131,14 +139,14 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     return () => clearInterval(interval);
   }, [robot.sn]);
   
-  // ✅ LOAD ALL POIs FROM DATABASE (UNIFIED FOR ALL ROBOTS)
+  // Load all POIs from database
   const loadAllPOIs = async () => {
     try {
       const poisData = await api.getPOIList();
       setAllPOIs(poisData);
-      console.log("Loaded POIs:", poisData);
+      console.log("✅ Loaded POIs:", poisData);
     } catch (error) {
-      console.error("Failed to load POIs:", error);
+      console.error("❌ Failed to load POIs:", error);
       toast.error("Failed to load locations");
     }
   };
@@ -156,6 +164,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     }
   };
   
+  // ✅ FIX: Handle navigation with proper routing
   const handleGoToLocation = async () => {
     if (!selectedPoi) {
       toast.error("Please select a location");
@@ -166,23 +175,40 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       setLoading(true);
       
       if (isTemi) {
-        // ✅ Temi: Use dispatchTask
-        const result = await api.dispatchTask("goto", robot.sn, { 
-          location: selectedPoi, 
-          speed 
+        // ✅ Temi: Use Temi goto endpoint
+        const response = await fetch('http://192.168.0.183:8000/api/v1/robot/temi/command/goto', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sn: robot.sn,
+            location: selectedPoi,
+            speed: speed
+          })
         });
         
+        const result = await response.json();
+        
         if (result.status === 200) {
-          toast.success(`Temi moving to ${selectedPoi}`);
+          toast.success(`✅ Temi moving to ${selectedPoi}`);
         } else {
           toast.error(result.msg || "Failed to move");
         }
       } else {
-        // ✅ Fielder/AMR: Use goto endpoint
-        const result = await api.moveToPOI(robot.sn, selectedPoi, robot.model);
+        // ✅ Fielder/AMR: Use task dispatcher
+        const response = await fetch('http://192.168.0.183:8000/api/v1/task/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            task_type: 'goto',
+            robot_sn: robot.sn,
+            location: selectedPoi
+          })
+        });
         
-        if (result.status === 200 || result.ok) {
-          toast.success(`Fielder moving to ${selectedPoi}`);
+        const result = await response.json();
+        
+        if (result.status === 200) {
+          toast.success(`✅ Fielder moving to ${selectedPoi}`);
         } else {
           toast.error(result.msg || "Failed to move");
         }
@@ -190,7 +216,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       
       if (onSuccess) onSuccess();
     } catch (error: any) {
-      console.error("Navigation error:", error);
+      console.error("❌ Navigation error:", error);
       toast.error(error.message || "Failed to navigate");
     } finally {
       setLoading(false);
@@ -200,9 +226,17 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   const handleStop = async () => {
     try {
       if (isTemi) {
-        await api.stopRobot(robot.sn, robot.model);
+        // ✅ Temi stop
+        await fetch('http://192.168.0.183:8000/api/v1/robot/temi/command/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sn: robot.sn })
+        });
       } else {
-        await api.cancelMove();
+        // ✅ AMR/Fielder stop
+        await fetch('http://192.168.0.183:8000/api/v1/robot/cancel/task', {
+          method: 'GET'
+        });
       }
       toast.success("Robot stopped");
     } catch (error: any) {
@@ -210,20 +244,39 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     }
   };
   
+  // ✅ FIX: TTS function with proper endpoint
   const handleSpeak = async () => {
-    if (!ttsText || !isTemi) return;
+    if (!ttsText || !isTemi) {
+      if (!isTemi) {
+        toast.error("TTS is only available for Temi robots");
+      }
+      return;
+    }
     
     try {
       setLoading(true);
-      const result = await api.makeTemiSpeak(robot.sn, ttsText);
+      
+      // ✅ Use correct Temi TTS endpoint
+      const response = await fetch('http://192.168.0.183:8000/api/v1/robot/temi/command/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sn: robot.sn,
+          text: ttsText,
+          show_text: true
+        })
+      });
+      
+      const result = await response.json();
       
       if (result.status === 200) {
-        toast.success("Speaking...");
+        toast.success("✅ Speaking...");
         setTtsText("");
       } else {
         toast.error(result.msg || "Failed to speak");
       }
     } catch (error: any) {
+      console.error("❌ TTS error:", error);
       toast.error(error.message || "Failed to speak");
     } finally {
       setLoading(false);
@@ -260,7 +313,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     sendControlCommand(0, 0);
   };
   
-  // ✅ SAVE CURRENT POSITION AS POI (FOR ALL ROBOTS)
+  // Save current position as POI
   const handleSaveAsPOI = async () => {
     if (!position) {
       toast.error("No position data available");
@@ -276,50 +329,73 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     try {
       setLoading(true);
       
-      // Save POI to backend
-      const result = await api.setPOI(poiName, robot.sn, {
-        x: position.x || 0,
-        y: position.y || 0,
-        ori: position.yaw || position.ori || 0
+      // ✅ Use correct POI save endpoint
+      const response = await fetch('http://192.168.0.183:8000/api/v1/robot/set/poi', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: poiName,
+          x: position.x || 0,
+          y: position.y || 0,
+          ori: position.yaw || position.ori || 0
+        })
       });
+      
+      const result = await response.json();
       
       if (result.status === 200) {
         toast.success(`✅ POI "${poiName}" saved! Available for all robots.`);
-        // Reload POI list
         await loadAllPOIs();
       } else {
         toast.error(result.msg || "Failed to save POI");
       }
     } catch (error: any) {
-      console.error("Save POI error:", error);
+      console.error("❌ Save POI error:", error);
       toast.error(error.message || "Failed to save POI");
     } finally {
       setLoading(false);
     }
   };
   
-  // ✅ MOVE TO CHARGE - DIFFERENT LOCATIONS FOR TEMI AND FIELDER
+  // ✅ FIX: Move to charge with correct locations
   const handleMoveToCharge = async () => {
     try {
       setLoading(true);
       
       if (isTemi) {
         // ✅ Temi: Go to "home base"
-        const result = await api.dispatchTask("goto", robot.sn, { 
-          location: "home base" 
+        const response = await fetch('http://192.168.0.183:8000/api/v1/robot/temi/command/goto', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sn: robot.sn,
+            location: "home base"
+          })
         });
         
+        const result = await response.json();
+        
         if (result.status === 200) {
-          toast.success("Moving to home base");
+          toast.success("✅ Moving to home base");
         } else {
           toast.error("Home base location not found. Please save it first.");
         }
       } else {
         // ✅ Fielder: Go to "origin"
-        const result = await api.moveToPOI(robot.sn, "origin", robot.model);
+        const response = await fetch('http://192.168.0.183:8000/api/v1/task/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            task_type: 'goto',
+            robot_sn: robot.sn,
+            location: 'origin'
+          })
+        });
         
-        if (result.status === 200 || result.ok) {
-          toast.success("Moving to origin");
+        const result = await response.json();
+        
+        if (result.status === 200) {
+          toast.success("✅ Moving to origin");
         } else {
           toast.error("Origin location not found. Please save it first.");
         }
@@ -327,7 +403,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       
       if (onSuccess) onSuccess();
     } catch (error: any) {
-      console.error("Move to charge error:", error);
+      console.error("❌ Move to charge error:", error);
       toast.error(error.message || "Failed to move to charging station");
     } finally {
       setLoading(false);
@@ -548,7 +624,16 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                     ⚠️ <strong>Fielder/AMR:</strong> Enable remote control mode before manual operation
                   </p>
                   <button
-                    onClick={() => api.enableRemoteControl()}
+                    onClick={async () => {
+                      try {
+                        await fetch('http://192.168.0.183:8000/api/v1/robot/control/enable_remote', {
+                          method: 'POST'
+                        });
+                        toast.success("Remote control enabled");
+                      } catch (err) {
+                        toast.error("Failed to enable remote control");
+                      }
+                    }}
                     className="mt-2 w-full px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
                   >
                     Enable Remote Control

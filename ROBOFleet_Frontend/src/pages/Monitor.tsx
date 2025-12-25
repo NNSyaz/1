@@ -1,4 +1,4 @@
-// src/pages/Monitor.tsx - FIXED WITH ZOOM AND MAP UPLOAD
+// src/pages/Monitor.tsx - FIXED WITH ACTUAL COORDINATES
 import React, { useEffect, useState, useRef } from "react";
 import {
   Battery,
@@ -34,7 +34,9 @@ interface Robot {
   signal?: number;
   task?: string;
   sn?: string;
-  model?: string; // Added for Fielder identification
+  model?: string;
+  // ✅ NEW: Actual coordinates from API
+  actualPosition?: { x: number; y: number; yaw: number };
 }
 
 interface RegisteredRobot {
@@ -42,11 +44,11 @@ interface RegisteredRobot {
     sn: string;
     ip?: string;
     time_created?: number;
-    model?: string; // Added for robot type identification
+    model?: string;
   };
   nickname: string;
   name?: string;
-  model?: string; // Can be at top level too
+  model?: string;
 }
 
 /* ---------- Helpers ---------------------------------------------------- */
@@ -144,12 +146,14 @@ const Monitor: React.FC = () => {
             const status = await api.getRobotStatus(r.data.sn);
             const isOnline = status?.robotStatus?.state >= 2;
 
-            // ✅ GET REAL POSITION FROM API
-            const position = status?.position || status?.robotStatus?.position || { x: 0, y: 0 };
+            // ✅ GET ACTUAL POSITION FROM API
+            const actualPosition = status?.position || status?.robotStatus?.position || { x: 0, y: 0, yaw: 0 };
+            
+            console.log(`📍 Robot ${r.nickname} actual position:`, actualPosition);
             
             // Convert to map coordinates (0-100 range for percentage positioning)
-            const mapX = position.x !== 0 ? 50 + (position.x * 5) : 50;
-            const mapY = position.y !== 0 ? 50 - (position.y * 5) : 50;
+            const mapX = actualPosition.x !== 0 ? 50 + (actualPosition.x * 5) : 50;
+            const mapY = actualPosition.y !== 0 ? 50 - (actualPosition.y * 5) : 50;
             
             const boundedX = Math.max(5, Math.min(95, mapX));
             const boundedY = Math.max(5, Math.min(95, mapY));
@@ -164,10 +168,16 @@ const Monitor: React.FC = () => {
                 x: boundedX,
                 y: boundedY,
               },
+              // ✅ STORE ACTUAL POSITION
+              actualPosition: {
+                x: actualPosition.x || 0,
+                y: actualPosition.y || 0,
+                yaw: actualPosition.yaw || actualPosition.ori || 0
+              },
               signal: isOnline ? 85 + Math.random() * 15 : 0,
               task: isOnline ? "Idle" : "Offline",
               sn: r.data.sn,
-              model: r.data?.model || r.model || "AMR", // Get model from registration data
+              model: r.data?.model || r.model || "AMR",
             };
           } catch (e) {
             console.error(`Failed to get status for ${r.data.sn}:`, e);
@@ -178,10 +188,11 @@ const Monitor: React.FC = () => {
               battery: 0,
               lastSeen: new Date().toISOString(),
               position: { x: 50, y: 50 },
+              actualPosition: { x: 0, y: 0, yaw: 0 },
               signal: 0,
               task: "Offline",
               sn: r.data.sn,
-              model: r.data?.model || r.model || "AMR", // Get model from registration data
+              model: r.data?.model || r.model || "AMR",
             };
           }
         })
@@ -319,82 +330,10 @@ const Monitor: React.FC = () => {
   };
 
   const handleDownloadMapFromRobot = async () => {
-    try {
-      setLoading(true);
-      
-      // Find Fielder robot
-      const fielderRobot = robots.find(r => 
-        r.model?.toUpperCase() === "FIELDER" || r.model?.toUpperCase() === "AMR"
-      );
-      
-      if (!fielderRobot) {
-        alert("❌ No Fielder robot found. Please register a Fielder robot first.");
-        setLoading(false);
-        return;
-      }
-      
-      // Get robot IP
-      let robotIP = "192.168.0.250"; // Default Fielder IP
-      try {
-        robotIP = await api.getRobotIP(fielderRobot.sn || "");
-      } catch (err) {
-        console.warn("Using default Fielder IP:", robotIP);
-      }
-      
-      console.log(`📥 Fetching map from Fielder at ${robotIP}...`);
-      
-      // Get list of maps
-      const maps = await api.getFielderMaps(robotIP);
-      
-      if (!maps || maps.length === 0) {
-        alert("❌ No maps found on Fielder robot. Please create a map first using the robot's mapping feature.");
-        setLoading(false);
-        return;
-      }
-      
-      // Use the first map (most recent or active)
-      const activeMap = maps[0];
-      console.log(`📍 Using map: ${activeMap.map_name} (ID: ${activeMap.id})`);
-      
-      // Download map image using the image_url from the API
-      const imageUrl = `http://${robotIP}:8090/maps/${activeMap.id}.png`;
-      const response = await fetch(imageUrl);
-      
-      if (!response.ok) {
-        throw new Error(`Failed to download map image: ${response.status}`);
-      }
-      
-      const blob = await response.blob();
-      
-      // Convert to base64 for storage
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        setMapImage(base64);
-        localStorage.setItem("fleet_map_image", base64);
-        
-        // Save metadata
-        localStorage.setItem("fleet_map_metadata", JSON.stringify({
-          name: activeMap.map_name,
-          id: activeMap.id,
-          origin_x: activeMap.grid_origin_x,
-          origin_y: activeMap.grid_origin_y,
-          resolution: activeMap.grid_resolution || 0.05,
-          downloaded_at: new Date().toISOString(),
-          robot_ip: robotIP,
-          robot_name: fielderRobot.name
-        }));
-        
-        alert(`✅ Map "${activeMap.map_name}" downloaded successfully from ${fielderRobot.name}!`);
-      };
-      reader.readAsDataURL(blob);
-      
-    } catch (error: any) {
-      console.error("Failed to download map from robot:", error);
-      alert(`❌ Failed to download map: ${error.message}\n\nMake sure:\n1. The Fielder robot is online\n2. The robot is accessible at the configured IP\n3. The robot has at least one saved map`);
-    } finally {
-      setLoading(false);
-    }
+    // Note: This feature requires getRobotIP and getFielderMaps API methods
+    // which are not currently implemented in the API service.
+    // For now, users can upload maps manually using the upload button.
+    alert("⚠️ Map download from robot is not yet implemented. Please use the upload button to add a map image manually.");
   };
 
   const handleRemoveMapImage = () => {
@@ -588,6 +527,12 @@ const Monitor: React.FC = () => {
                             <span>•</span>
                             <span>{robot.task || "Idle"}</span>
                           </div>
+                          {/* ✅ DISPLAY ACTUAL COORDINATES */}
+                          {robot.actualPosition && (
+                            <div className="text-xs text-gray-500 mt-1 font-mono">
+                              Pos: ({robot.actualPosition.x.toFixed(2)}, {robot.actualPosition.y.toFixed(2)})
+                            </div>
+                          )}
                         </div>
                         <div className="text-right">
                           <div
@@ -713,7 +658,6 @@ const Monitor: React.FC = () => {
                 onMouseLeave={handleMouseUp}
                 onWheel={handleWheel}
               >
-                {/* Map Content with Transform */}
                 <div
                   style={{
                     transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
@@ -724,7 +668,6 @@ const Monitor: React.FC = () => {
                     position: 'relative',
                   }}
                 >
-                  {/* Background Map Image */}
                   {mapImage && (
                     <img
                       src={mapImage}
@@ -734,7 +677,6 @@ const Monitor: React.FC = () => {
                     />
                   )}
                   
-                  {/* Grid overlay (only if no map image) */}
                   {!mapImage && (
                     <div
                       className="absolute inset-0"
@@ -748,7 +690,6 @@ const Monitor: React.FC = () => {
                     />
                   )}
 
-                  {/* Floor plan lines (only if no map image) */}
                   {!mapImage && (
                     <svg
                       className="absolute inset-0 w-full h-full"
@@ -805,7 +746,6 @@ const Monitor: React.FC = () => {
                     </svg>
                   )}
 
-                  {/* Zone labels (only if no map image) */}
                   {!mapImage && (
                     <>
                       <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm">
@@ -845,7 +785,6 @@ const Monitor: React.FC = () => {
                       >
                         <Activity className="w-5 h-5 text-white" />
 
-                        {/* Status indicator */}
                         <div
                           className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${getStatusColor(
                             robot.status
@@ -853,18 +792,22 @@ const Monitor: React.FC = () => {
                         />
                       </div>
 
-                      {/* Robot label */}
+                      {/* ✅ DISPLAY ACTUAL COORDINATES */}
                       <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white/95 backdrop-blur px-2 py-1 rounded shadow-sm whitespace-nowrap">
-                        <span className="text-xs font-medium text-gray-900">
+                        <span className="text-xs font-medium text-gray-900 block">
                           {robot.name}
                         </span>
+                        {robot.actualPosition && (
+                          <span className="text-xs text-gray-600 font-mono block">
+                            ({robot.actualPosition.x.toFixed(2)}, {robot.actualPosition.y.toFixed(2)})
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Map Instructions */}
               <div className="mt-4 text-xs text-gray-500 space-y-1">
                 <p>• Scroll to zoom in/out</p>
                 <p>• Click and drag to pan the map</p>
@@ -985,6 +928,7 @@ const Monitor: React.FC = () => {
                     </div>
                   </div>
 
+                  {/* ✅ DISPLAY ACTUAL POSITION */}
                   <div className="bg-gray-50 rounded-lg p-4">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-blue-100 rounded-lg">
@@ -992,10 +936,15 @@ const Monitor: React.FC = () => {
                       </div>
                       <div>
                         <div className="text-xs text-gray-600">Position</div>
-                        <div className="text-sm font-semibold text-gray-900">
-                          X: {selectedRobot.position.x.toFixed(1)}, Y:{" "}
-                          {selectedRobot.position.y.toFixed(1)}
-                        </div>
+                        {selectedRobot.actualPosition ? (
+                          <div className="text-sm font-semibold text-gray-900 font-mono">
+                            ({selectedRobot.actualPosition.x.toFixed(3)}, {selectedRobot.actualPosition.y.toFixed(3)})
+                          </div>
+                        ) : (
+                          <div className="text-sm font-semibold text-gray-900">
+                            N/A
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
