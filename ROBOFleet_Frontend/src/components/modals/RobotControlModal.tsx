@@ -1,4 +1,4 @@
-// src/components/modals/RobotControlModal.tsx - FIXED VERSION
+// src/components/modals/RobotControlModal.tsx - COMPLETE FIX
 import React, { useState, useEffect, useRef } from "react";
 import { X, MapPin, RefreshCw, Save } from "lucide-react";
 import api from "../../services/api";
@@ -22,8 +22,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   onSuccess,
 }) => {
   const [activeTab, setActiveTab] = useState<"navigation" | "manual" | "tts">("navigation");
-  const [pois, setPois] = useState<any[]>([]);
-  const [temiLocations, setTemiLocations] = useState<any[]>([]);
+  const [allPOIs, setAllPOIs] = useState<any[]>([]); // ✅ Unified POI list for all robots
   const [selectedPoi, setSelectedPoi] = useState("");
   const [speed, setSpeed] = useState(1.0);
   const [loading, setLoading] = useState(false);
@@ -46,7 +45,6 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   // ✅ KEYBOARD CONTROL IMPLEMENTATION
   const sendControlCommand = async (linear: number, angular: number) => {
     const now = Date.now();
-    // Throttle commands to every 100ms to reduce lag
     if (now - lastCommandTime.current < 100) {
       return;
     }
@@ -67,17 +65,16 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     let linear = 0;
     let angular = 0;
     
-    // Calculate movement based on pressed keys
-    if (keysPressed.current.has("w") || keysPressed.current.has("ArrowUp")) {
+    if (keysPressed.current.has("w") || keysPressed.current.has("arrowup")) {
       linear += linearSpeed;
     }
-    if (keysPressed.current.has("s") || keysPressed.current.has("ArrowDown")) {
+    if (keysPressed.current.has("s") || keysPressed.current.has("arrowdown")) {
       linear -= linearSpeed;
     }
-    if (keysPressed.current.has("a") || keysPressed.current.has("ArrowLeft")) {
+    if (keysPressed.current.has("a") || keysPressed.current.has("arrowleft")) {
       angular += angularSpeed;
     }
-    if (keysPressed.current.has("d") || keysPressed.current.has("ArrowRight")) {
+    if (keysPressed.current.has("d") || keysPressed.current.has("arrowright")) {
       angular -= angularSpeed;
     }
     
@@ -99,7 +96,6 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       updateMovement();
     }
     
-    // Emergency stop with Space
     if (e.key === " ") {
       e.preventDefault();
       handleManualStop();
@@ -129,23 +125,21 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   }, [manualActive, linearSpeed, angularSpeed]);
   
   useEffect(() => {
-    loadLocations();
+    loadAllPOIs();
     loadPosition();
     const interval = setInterval(loadPosition, 3000);
     return () => clearInterval(interval);
   }, [robot.sn]);
   
-  const loadLocations = async () => {
+  // ✅ LOAD ALL POIs FROM DATABASE (UNIFIED FOR ALL ROBOTS)
+  const loadAllPOIs = async () => {
     try {
-      if (isTemi) {
-        const locations = await api.getTemiLocations(robot.sn);
-        setTemiLocations(locations);
-      } else {
-        const poisData = await api.getPOIList();
-        setPois(poisData);
-      }
+      const poisData = await api.getPOIList();
+      setAllPOIs(poisData);
+      console.log("Loaded POIs:", poisData);
     } catch (error) {
-      console.error("Failed to load locations:", error);
+      console.error("Failed to load POIs:", error);
+      toast.error("Failed to load locations");
     }
   };
   
@@ -154,6 +148,8 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       const status = await api.getRobotStatus(robot.sn);
       if (status?.position) {
         setPosition(status.position);
+      } else if (status?.robotStatus?.position) {
+        setPosition(status.robotStatus.position);
       }
     } catch (error) {
       console.error("Failed to load position:", error);
@@ -168,15 +164,34 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     
     try {
       setLoading(true);
+      
       if (isTemi) {
-        await api.dispatchTask("goto", robot.sn, { location: selectedPoi, speed });
+        // ✅ Temi: Use dispatchTask
+        const result = await api.dispatchTask("goto", robot.sn, { 
+          location: selectedPoi, 
+          speed 
+        });
+        
+        if (result.status === 200) {
+          toast.success(`Temi moving to ${selectedPoi}`);
+        } else {
+          toast.error(result.msg || "Failed to move");
+        }
       } else {
-        await api.moveToPOI(robot.sn, selectedPoi, robot.model);
+        // ✅ Fielder/AMR: Use goto endpoint
+        const result = await api.moveToPOI(robot.sn, selectedPoi, robot.model);
+        
+        if (result.status === 200 || result.ok) {
+          toast.success(`Fielder moving to ${selectedPoi}`);
+        } else {
+          toast.error(result.msg || "Failed to move");
+        }
       }
-      toast.success(`Moving to ${selectedPoi}`);
+      
       if (onSuccess) onSuccess();
     } catch (error: any) {
-      toast.error(error.message || "Failed to move");
+      console.error("Navigation error:", error);
+      toast.error(error.message || "Failed to navigate");
     } finally {
       setLoading(false);
     }
@@ -200,9 +215,14 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     
     try {
       setLoading(true);
-      await api.makeTemiSpeak(robot.sn, ttsText);
-      toast.success("Speaking...");
-      setTtsText("");
+      const result = await api.makeTemiSpeak(robot.sn, ttsText);
+      
+      if (result.status === 200) {
+        toast.success("Speaking...");
+        setTtsText("");
+      } else {
+        toast.error(result.msg || "Failed to speak");
+      }
     } catch (error: any) {
       toast.error(error.message || "Failed to speak");
     } finally {
@@ -240,7 +260,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     sendControlCommand(0, 0);
   };
   
-  // ✅ SAVE CURRENT POSITION AS POI
+  // ✅ SAVE CURRENT POSITION AS POI (FOR ALL ROBOTS)
   const handleSaveAsPOI = async () => {
     if (!position) {
       toast.error("No position data available");
@@ -248,20 +268,69 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     }
     
     const poiName = prompt(
-      `Save current position as POI?\n\nX: ${position.x?.toFixed(3)}\nY: ${position.y?.toFixed(3)}\nYaw: ${position.yaw?.toFixed(3)}\n\nEnter location name:`
+      `Save current position as POI?\n\nX: ${position.x?.toFixed(3)}\nY: ${position.y?.toFixed(3)}\nYaw: ${(position.yaw || position.ori || 0).toFixed(3)}\n\nEnter location name:`
     );
     
     if (!poiName) return;
     
     try {
-      // Save to backend
-      await api.setPOI(poiName, robot.sn, position);
-      toast.success(`✅ POI "${poiName}" saved! Available for all robots.`);
+      setLoading(true);
       
-      // Reload locations
-      await loadLocations();
+      // Save POI to backend
+      const result = await api.setPOI(poiName, robot.sn, {
+        x: position.x || 0,
+        y: position.y || 0,
+        ori: position.yaw || position.ori || 0
+      });
+      
+      if (result.status === 200) {
+        toast.success(`✅ POI "${poiName}" saved! Available for all robots.`);
+        // Reload POI list
+        await loadAllPOIs();
+      } else {
+        toast.error(result.msg || "Failed to save POI");
+      }
     } catch (error: any) {
+      console.error("Save POI error:", error);
       toast.error(error.message || "Failed to save POI");
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // ✅ MOVE TO CHARGE - DIFFERENT LOCATIONS FOR TEMI AND FIELDER
+  const handleMoveToCharge = async () => {
+    try {
+      setLoading(true);
+      
+      if (isTemi) {
+        // ✅ Temi: Go to "home base"
+        const result = await api.dispatchTask("goto", robot.sn, { 
+          location: "home base" 
+        });
+        
+        if (result.status === 200) {
+          toast.success("Moving to home base");
+        } else {
+          toast.error("Home base location not found. Please save it first.");
+        }
+      } else {
+        // ✅ Fielder: Go to "origin"
+        const result = await api.moveToPOI(robot.sn, "origin", robot.model);
+        
+        if (result.status === 200 || result.ok) {
+          toast.success("Moving to origin");
+        } else {
+          toast.error("Origin location not found. Please save it first.");
+        }
+      }
+      
+      if (onSuccess) onSuccess();
+    } catch (error: any) {
+      console.error("Move to charge error:", error);
+      toast.error(error.message || "Failed to move to charging station");
+    } finally {
+      setLoading(false);
     }
   };
   
@@ -327,7 +396,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
               <div>
                 <div className="text-xs text-blue-700">Orientation</div>
                 <div className="font-mono text-lg font-bold text-blue-900">
-                  {position.yaw?.toFixed(3)} rad
+                  {(position.yaw || position.ori || 0)?.toFixed(3)} rad
                 </div>
               </div>
               <div>
@@ -382,7 +451,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Target Location
+                  Target Location ({allPOIs.length} available)
                 </label>
                 <select
                   value={selectedPoi}
@@ -390,18 +459,17 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">Choose location...</option>
-                  {isTemi
-                    ? temiLocations.map((loc) => (
-                        <option key={loc} value={loc}>
-                          {loc}
-                        </option>
-                      ))
-                    : pois.map((poi) => (
-                        <option key={poi.name} value={poi.name}>
-                          {poi.name}
-                        </option>
-                      ))}
+                  {allPOIs.map((poi) => (
+                    <option key={poi.name} value={poi.name}>
+                      {poi.name} {poi.category ? `(${poi.category})` : ""}
+                    </option>
+                  ))}
                 </select>
+                {allPOIs.length === 0 && (
+                  <p className="text-xs text-orange-600 mt-1">
+                    No saved locations. Save current position to create one.
+                  </p>
+                )}
               </div>
               
               {isTemi && (
@@ -436,6 +504,15 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                   ⏹️ Stop
                 </button>
               </div>
+              
+              {/* Charge Button */}
+              <button
+                onClick={handleMoveToCharge}
+                disabled={loading}
+                className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                🔋 Move to Charge ({isTemi ? "home base" : "origin"})
+              </button>
             </div>
           )}
           
@@ -633,7 +710,8 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={handleSaveAsPOI}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+              disabled={loading || !position}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
             >
               <Save className="w-4 h-4" />
               Save as POI

@@ -168,15 +168,6 @@ export const cancelTask = async (sn: string) => {
   return response.data;
 };
 
-export const dispatchTask = async (taskType: string, sn: string, params: any) => {
-  const response = await api.post("/api/v1/robot/dispatch/task", {
-    task_type: taskType,
-    sn,
-    ...params,
-  });
-  return response.data;
-};
-
 export const cancelMove = async () => {
   const response = await api.post("/api/v1/robot/control/cancel");
   return response.data;
@@ -208,14 +199,6 @@ export const controlTemiManual = async (
     sn,
     linear: linearVelocity,
     angular: angularVelocity,
-  });
-  return response.data;
-};
-
-export const makeTemiSpeak = async (sn: string, text: string) => {
-  const response = await api.post("/api/v1/robot/temi/command/tts", {
-    sn,
-    text,
   });
   return response.data;
 };
@@ -289,26 +272,9 @@ export const sendManualControl = async (
   }
 };
 
-export const enableRemoteControl = async () => {
-  const response = await api.post("/api/v1/robot/control/enable_remote");
-  return response.data;
-};
-
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
-
-export const moveToPOI = async (
-  sn: string,
-  poiName: string,
-  robotType: string
-) => {
-  if (robotType.toUpperCase() === "TEMI") {
-    return moveTemiToPOI(sn, poiName);
-  } else {
-    return moveAMRToPOI(sn, poiName);
-  }
-};
 
 export const stopRobot = async (sn: string, robotType: string) => {
   if (robotType.toUpperCase() === "TEMI") {
@@ -332,14 +298,6 @@ export const controlRobotManual = async (
 };
 
 export const getRegisteredRobots = getRobotList;
-
-export const moveToCharge = async (sn: string, robotType: string) => {
-  if (robotType.toUpperCase() === "TEMI") {
-    return moveTemiToPOI(sn, "home_base");
-  } else {
-    return moveAMRToPOI(sn, "charging_station");
-  }
-};
 
 export const getRobotLocation = async (sn: string) => {
   const status = await getRobotStatus(sn);
@@ -382,6 +340,174 @@ export const moveToCoordinate = async (
   return response.data;
 };
 
+/**
+ * Fielder Map API Functions
+ */
+
+export const getFielderMaps = async (robotIP: string = "192.168.0.250") => {
+  // ✅ CHANGED: Use backend proxy instead of direct access
+  const response = await fetch(
+    `http://localhost:8000/api/v1/robot/fielder/maps?robot_ip=${robotIP}`
+  );
+  if (!response.ok) throw new Error("Failed to fetch maps");
+  return await response.json();
+};
+
+// Get map detail from Fielder robot
+export const getFielderMapDetail = async (mapId: number, robotIP: string = "192.168.0.250") => {
+  try {
+    const response = await fetch(`http://${robotIP}:8090/maps/${mapId}`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch map detail: ${response.status}`);
+    }
+    const mapDetail = await response.json();
+    return mapDetail;
+  } catch (error) {
+    console.error("Error fetching Fielder map detail:", error);
+    throw error;
+  }
+};
+
+// Download map image from Fielder robot
+export const downloadFielderMapImage = async (mapId: number, robotIP: string = "192.168.0.250") => {
+  // ✅ CHANGED: Use backend proxy
+  const response = await fetch(
+    `http://localhost:8000/api/v1/robot/fielder/maps/${mapId}/image?robot_ip=${robotIP}`
+  );
+  if (!response.ok) throw new Error("Failed to download map");
+  const blob = await response.blob();
+  
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+};
+
+// Get active map from Fielder robot
+export const getFielderActiveMap = async (robotIP: string = "192.168.0.250") => {
+  try {
+    const maps = await getFielderMaps(robotIP);
+    if (!maps || maps.length === 0) {
+      throw new Error("No maps found on robot");
+    }
+    
+    // Return the first map (most recent or active)
+    // You can add logic here to select the active map based on criteria
+    return maps[0];
+  } catch (error) {
+    console.error("Error getting active Fielder map:", error);
+    throw error;
+  }
+};
+
+// Get robot IP from database/config
+export const getRobotIP = async (sn: string): Promise<string> => {
+  try {
+    const response = await api.get(`/api/v1/robot/get/registered_robots`);
+    const robots = response.data;
+    
+    const robot = robots.find((r: any) => r.data?.sn === sn);
+    if (robot && robot.data?.ip) {
+      return robot.data.ip;
+    }
+    
+    // Fallback to default Fielder IP
+    return "192.168.0.250";
+  } catch (error) {
+    console.error("Error getting robot IP:", error);
+    return "192.168.0.250";
+  }
+};
+
+/**
+ * Updated Navigation Functions (FIXED)
+ */
+
+// Temi: Use dispatchTask endpoint
+export const dispatchTask = async (action: string, sn: string, params: any) => {
+  try {
+    const response = await api.post("/api/v1/robot/dispatch/task", {
+      action,
+      sn,
+      ...params
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error("Dispatch task error:", error);
+    return { status: 500, msg: error.message || "Failed to dispatch task" };
+  }
+};
+
+// Temi: TTS command
+export const makeTemiSpeak = async (sn: string, text: string) => {
+  try {
+    const response = await api.post("/api/v1/robot/temi/command/tts", {
+      sn,
+      text
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error("TTS error:", error);
+    return { status: 500, msg: error.message || "Failed to speak" };
+  }
+};
+
+// Fielder: GOTO command
+export const fielderGoTo = async (sn: string, location: string) => {
+  try {
+    const response = await api.post("/api/v1/robot/control/goto", {
+      sn,
+      location
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error("Fielder goto error:", error);
+    return { status: 500, msg: error.message || "Failed to navigate" };
+  }
+};
+
+// Fielder: Enable remote control
+export const enableRemoteControl = async () => {
+  try {
+    const response = await api.post("/api/v1/robot/control/enable_remote");
+    return response.data;
+  } catch (error: any) {
+    console.error("Enable remote control error:", error);
+    return { status: 500, msg: error.message || "Failed to enable remote control" };
+  }
+};
+
+/**
+ * Universal Navigation Function (handles both Temi and Fielder)
+ */
+export const moveToPOI = async (sn: string, location: string, model: string) => {
+  const isTemi = model?.toUpperCase() === "TEMI";
+  
+  if (isTemi) {
+    // Use Temi dispatch task
+    return await dispatchTask("goto", sn, { location });
+  } else {
+    // Use Fielder goto
+    return await fielderGoTo(sn, location);
+  }
+};
+
+/**
+ * Move to Charge (different locations for Temi and Fielder)
+ */
+export const moveToCharge = async (sn: string, model: string) => {
+  const isTemi = model?.toUpperCase() === "TEMI";
+  
+  if (isTemi) {
+    // Temi: Go to "home base"
+    return await dispatchTask("goto", sn, { location: "home base" });
+  } else {
+    // Fielder: Go to "origin"
+    return await fielderGoTo(sn, "origin");
+  }
+};
 // ============================================================================
 // EXPORT DEFAULT API OBJECT
 // ============================================================================
@@ -392,16 +518,15 @@ export default {
   getRegisteredRobots,
   getRobotStatus,
   registerRobot,
-  updateRobot,
   deleteRobot,
-
-  // POI Management
   getPOIList,
-  addPOI,
-  getTemiLocations,
   setPOI,
   deletePOI,
   updatePOI,
+
+  // POI Management
+  addPOI,
+  getTemiLocations,
 
   // Task Management
   getTaskHistory,
@@ -434,4 +559,11 @@ export default {
   checkHealth,
   createRobotStatusWebSocket,
   moveToCoordinate,
+  fielderGoTo, 
+  // Map Functions (NEW)
+  getFielderMaps,
+  getFielderMapDetail,
+  downloadFielderMapImage,
+  getFielderActiveMap,
+  getRobotIP,
 };
