@@ -1,4 +1,4 @@
-// src/pages/RobotManagement.tsx - COMPLETE FIX
+// src/pages/RobotManagement.tsx - TYPESCRIPT ERRORS FIXED
 import React, { useState, useEffect } from "react";
 import {
   X,
@@ -19,6 +19,7 @@ import fielderImage from "../assets/fielderImage.png";
 import temiImage from "../assets/temiImage.png"; 
 import api from "../services/api";
 import { robotStatusService } from "../services/robotStatusService";
+import RobotControlModal from "../components/modals/RobotControlModal";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                              */
@@ -68,10 +69,9 @@ const getRobotModel = (robot: any): string => {
 };
 
 const getRobotImage = (model: string) => {
-
   switch (model.toUpperCase()) {
     case "TEMI":
-    return temiImage;
+      return temiImage;
     case "FIELDER":
     case "AMR":
     default:
@@ -89,7 +89,6 @@ const RobotManagement: React.FC = () => {
   >("summary");
   const [robots, setRobots] = useState<Robot[]>([]);
   const [selectedRobot, setSelectedRobot] = useState<Robot | null>(null);
-  const [showEditRobot, setShowEditRobot] = useState(false);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   const [showAddRobot, setShowAddRobot] = useState(false);
   const [showControlModal, setShowControlModal] = useState(false);
@@ -105,7 +104,6 @@ const RobotManagement: React.FC = () => {
     ip: "",
     model: "AMR",
   });
-  const [editForm, setEditForm] = useState<Partial<Robot>>({});
 
   /* ------------ Data Fetching ------------------------------------- */
   const fetchRobots = async () => {
@@ -288,11 +286,11 @@ const RobotManagement: React.FC = () => {
   };
 
   const handleMoveToPOI = async (poiName: string) => {
-    if (!selectedRobot) return;
+    if (!selectedRobot || !selectedRobot.sn) return; // ✅ FIX: Check for undefined sn
     
     try {
       setLoading(true);
-      const result = await api.moveToPOI(selectedRobot.sn!, poiName, selectedRobot.model);
+      const result = await api.moveToPOI(selectedRobot.sn, poiName, selectedRobot.model);
       
       if (result.status && result.status !== 200) {
         alert(`Error: ${result.msg || "Failed to move to POI"}`);
@@ -310,11 +308,11 @@ const RobotManagement: React.FC = () => {
   };
 
   const handleMoveToCharge = async () => {
-    if (!selectedRobot) return;
+    if (!selectedRobot || !selectedRobot.sn) return; // ✅ FIX: Check for undefined sn
     
     try {
       setLoading(true);
-      const result = await api.moveToCharge(selectedRobot.sn!, selectedRobot.model);
+      const result = await api.moveToCharge(selectedRobot.sn, selectedRobot.model);
 
       if (result.status && result.status !== 200) {
         alert(`Error: ${result.msg || "Failed to move to charging station"}`);
@@ -344,15 +342,6 @@ const RobotManagement: React.FC = () => {
     } catch (err: any) {
       alert(err.message || "Failed to delete");
     }
-  };
-
-  const saveRobotEdit = () => {
-    if (!selectedRobot) return;
-    setRobots((prev) =>
-      prev.map((r) => (r.id === selectedRobot.id ? { ...r, ...editForm } : r))
-    );
-    setSelectedRobot((s) => (s ? { ...s, ...editForm } : s));
-    setShowEditRobot(false);
   };
 
   /* ------------ Helpers ------------------------------------------- */
@@ -533,7 +522,7 @@ const RobotManagement: React.FC = () => {
                 </div>
 
                 <div className="pt-3 border-t border-gray-100 space-y-2">
-                  {/* ✅ NEW: Robot Control Button */}
+                  {/* Robot Control Button */}
                   <button
                     onClick={() => setShowControlModal(true)}
                     className="w-full bg-purple-600 text-white py-2 rounded hover:bg-purple-700 flex items-center justify-center gap-2"
@@ -582,13 +571,6 @@ const RobotManagement: React.FC = () => {
                 </div>
 
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setShowEditRobot(true)}
-                    className="flex-1 border py-2 rounded hover:bg-gray-50 inline-flex items-center justify-center gap-2"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                    Edit
-                  </button>
                   <button
                     onClick={() => setShowRemoveConfirm(true)}
                     className="flex-1 bg-red-600 text-white py-2 rounded hover:bg-red-700 inline-flex items-center justify-center gap-2"
@@ -799,336 +781,20 @@ const RobotManagement: React.FC = () => {
         </div>
       )}
 
-      {/* ✅ NEW: Robot Control Modal - Import from separate file */}
-      {showControlModal && selectedRobot && (
+      {/* Robot Control Modal */}
+      {showControlModal && selectedRobot && selectedRobot.sn && (
         <RobotControlModal
-          robot={selectedRobot}
-          pois={pois}
+          robot={{
+            id: selectedRobot.id,
+            name: selectedRobot.name,
+            sn: selectedRobot.sn,
+            model: selectedRobot.model,
+            status: selectedRobot.status,
+          }}
           onClose={() => setShowControlModal(false)}
-          onRefresh={fetchRobots}
+          onSuccess={fetchRobots}
         />
       )}
-    </div>
-  );
-};
-
-/* ------------------------------------------------------------------ */
-/* Robot Control Modal Component */
-/* ------------------------------------------------------------------ */
-interface RobotControlModalProps {
-  robot: Robot;
-  pois: any[];
-  onClose: () => void;
-  onRefresh: () => void;
-}
-
-const RobotControlModal: React.FC<RobotControlModalProps> = ({
-  robot,
-  pois,
-  onClose,
-  onRefresh,
-}) => {
-  const [activeTab, setActiveTab] = useState<"navigation" | "manual" | "tts">(
-    "navigation"
-  );
-  const [selectedPOI, setSelectedPOI] = useState("");
-  const [speed, setSpeed] = useState(1.0);
-  const [ttsText, setTtsText] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [manualControlActive, setManualControlActive] = useState(false);
-  const [linearSpeed, setLinearSpeed] = useState(0.5);
-  const [angularSpeed, setAngularSpeed] = useState(0.5);
-  const [currentLinear, setCurrentLinear] = useState(0);
-  const [currentAngular, setCurrentAngular] = useState(0);
-
-  const isTemi = robot.model.toUpperCase() === "TEMI";
-
-  const handleGoToLocation = async () => {
-    if (!selectedPOI) {
-      alert("Please select a location");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const result = await api.moveToPOI(robot.sn!, selectedPOI, robot.model);
-      if (result.status === 200 || result.ok) {
-        alert(`Moving to ${selectedPOI}`);
-        onRefresh();
-      } else {
-        alert(result.msg || "Failed to move");
-      }
-    } catch (error: any) {
-      alert(error.message || "Failed to move");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStop = async () => {
-    try {
-      if (isTemi) {
-        await api.stopRobot(robot.sn!, robot.model);
-      } else {
-        await api.cancelMove();
-      }
-      alert("Robot stopped");
-    } catch (error: any) {
-      alert(error.message || "Failed to stop");
-    }
-  };
-
-  const handleTTSSpeak = async () => {
-    if (!ttsText) {
-      alert("Please enter text");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      await api.makeTemiSpeak(robot.sn!, ttsText);
-      alert("Speaking...");
-      setTtsText("");
-    } catch (error: any) {
-      alert(error.message || "Failed to speak");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleManualMove = (linear: number, angular: number) => {
-    setCurrentLinear(linear * linearSpeed);
-    setCurrentAngular(angular * angularSpeed);
-  };
-
-  const handleManualStop = () => {
-    setCurrentLinear(0);
-    setCurrentAngular(0);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-auto">
-        <div className="p-6 border-b border-gray-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-gray-900">
-                🎮 Robot Control
-              </h2>
-              <p className="text-sm text-gray-500 mt-1">
-                {robot.name} ({robot.model})
-              </p>
-            </div>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex border-b border-gray-100">
-          <button
-            onClick={() => setActiveTab("navigation")}
-            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-              activeTab === "navigation"
-                ? "border-b-2 border-blue-600 text-blue-600"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            📍 Navigation
-          </button>
-          <button
-            onClick={() => setActiveTab("manual")}
-            className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-              activeTab === "manual"
-                ? "border-b-2 border-blue-600 text-blue-600"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            🕹️ Manual Control
-          </button>
-          {isTemi && (
-            <button
-              onClick={() => setActiveTab("tts")}
-              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
-                activeTab === "tts"
-                  ? "border-b-2 border-blue-600 text-blue-600"
-                  : "text-gray-600 hover:text-gray-900"
-              }`}
-            >
-              💬 TTS
-            </button>
-          )}
-        </div>
-
-        {/* Content */}
-        <div className="p-6">
-          {activeTab === "navigation" && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Location
-                </label>
-                <select
-                  value={selectedPOI}
-                  onChange={(e) => setSelectedPOI(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Choose location...</option>
-                  {pois.map((poi) => (
-                    <option key={poi.name} value={poi.name}>
-                      {poi.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {isTemi && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Speed: {speed.toFixed(1)}
-                  </label>
-                  <input
-                    type="range"
-                    min="0.5"
-                    max="1.5"
-                    step="0.1"
-                    value={speed}
-                    onChange={(e) => setSpeed(parseFloat(e.target.value))}
-                    className="w-full"
-                  />
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                <button
-                  onClick={handleGoToLocation}
-                  disabled={loading || !selectedPOI}
-                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {loading ? "Moving..." : "▶️ Go"}
-                </button>
-                <button
-                  onClick={handleStop}
-                  className="flex-1 bg-red-600 text-white py-2 rounded-lg hover:bg-red-700"
-                >
-                  ⏹️ Stop
-                </button>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "manual" && (
-            <div className="space-y-4">
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-yellow-800">
-                  ⚠️ Use arrow keys or buttons. SPACE to stop.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 max-w-xs mx-auto">
-                <div></div>
-                <button
-                  onMouseDown={() => handleManualMove(0.5, 0)}
-                  onMouseUp={handleManualStop}
-                  className="bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 active:scale-95"
-                >
-                  ⬆️
-                </button>
-                <div></div>
-
-                <button
-                  onMouseDown={() => handleManualMove(0, 0.5)}
-                  onMouseUp={handleManualStop}
-                  className="bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 active:scale-95"
-                >
-                  ⬅️
-                </button>
-                <button
-                  onClick={handleManualStop}
-                  className="bg-red-600 text-white py-3 rounded-lg hover:bg-red-700"
-                >
-                  ⏹️
-                </button>
-                <button
-                  onMouseDown={() => handleManualMove(0, -0.5)}
-                  onMouseUp={handleManualStop}
-                  className="bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 active:scale-95"
-                >
-                  ➡️
-                </button>
-
-                <div></div>
-                <button
-                  onMouseDown={() => handleManualMove(-0.5, 0)}
-                  onMouseUp={handleManualStop}
-                  className="bg-orange-600 text-white py-3 rounded-lg hover:bg-orange-700 active:scale-95"
-                >
-                  ⬇️
-                </button>
-                <div></div>
-              </div>
-
-              <div className="mt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Linear Speed: {linearSpeed.toFixed(1)}
-                </label>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="1.0"
-                  step="0.1"
-                  value={linearSpeed}
-                  onChange={(e) => setLinearSpeed(parseFloat(e.target.value))}
-                  className="w-full"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Angular Speed: {angularSpeed.toFixed(1)}
-                </label>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="1.0"
-                  step="0.1"
-                  value={angularSpeed}
-                  onChange={(e) => setAngularSpeed(parseFloat(e.target.value))}
-                  className="w-full"
-                />
-              </div>
-            </div>
-          )}
-
-          {activeTab === "tts" && isTemi && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Text to Speak
-                </label>
-                <textarea
-                  value={ttsText}
-                  onChange={(e) => setTtsText(e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  rows={4}
-                  placeholder="Enter text for robot to speak..."
-                />
-              </div>
-              <button
-                onClick={handleTTSSpeak}
-                disabled={loading || !ttsText}
-                className="w-full bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 disabled:opacity-50"
-              >
-                {loading ? "Speaking..." : "🔊 Speak"}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 };

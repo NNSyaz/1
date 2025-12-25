@@ -1,7 +1,8 @@
+// src/services/api.ts - UPDATED WITH POI IMPROVEMENTS
 import axios from "axios";
 
 // Base API URL - adjust this to match your backend
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://192.168.0.183:8000";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -14,7 +15,6 @@ const api = axios.create({
 // Add request interceptor for auth if needed
 api.interceptors.request.use(
   (config) => {
-    // Add auth token if available
     const token = localStorage.getItem("auth_token");
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -39,18 +39,11 @@ api.interceptors.response.use(
 // ROBOT MANAGEMENT APIs
 // ============================================================================
 
-/**
- * Get list of all registered robots
- */
 export const getRobotList = async () => {
   const response = await api.get("/api/v1/robot/get/robot_list");
   return response.data;
 };
 
-/**
- * Get detailed status of a specific robot
- * @param sn Robot serial number
- */
 export const getRobotStatus = async (sn: string) => {
   const response = await api.get("/api/v1/robot/get/robot_status", {
     params: { sn },
@@ -58,36 +51,23 @@ export const getRobotStatus = async (sn: string) => {
   return response.data;
 };
 
-/**
- * Register a new robot
- * @param robotData Robot registration data
- */
 export const registerRobot = async (robotData: any) => {
   const response = await api.post("/api/v1/robot/register", robotData);
   return response.data;
 };
 
-/**
- * Update robot information
- * @param sn Robot serial number
- * @param updateData Data to update
- */
 export const updateRobot = async (sn: string, updateData: any) => {
   const response = await api.put(`/api/v1/robot/update/${sn}`, updateData);
   return response.data;
 };
 
-/**
- * Delete a robot
- * @param sn Robot serial number
- */
 export const deleteRobot = async (sn: string) => {
   const response = await api.delete(`/api/v1/robot/delete/${sn}`);
   return response.data;
 };
 
 // ============================================================================
-// POI (Point of Interest) APIs
+// POI (Point of Interest) APIs - IMPROVED
 // ============================================================================
 
 /**
@@ -119,17 +99,53 @@ export const getTemiLocations = async (sn: string) => {
 };
 
 /**
- * Set/Save current position as POI
+ * ✅ IMPROVED: Set/Save current position as POI (accessible to all robots)
  * @param poiName POI name
  * @param sn Robot serial number (optional)
- * @param position Position data (optional)
+ * @param position Position data with x, y, yaw/ori
  */
-export const setPOI = async (poiName: string, sn?: string, position?: any) => {
-  const response = await api.post("/api/v1/poi/set", {
+export const setPOI = async (
+  poiName: string, 
+  sn?: string, 
+  position?: { x: number; y: number; yaw?: number; ori?: number }
+) => {
+  // Prepare payload
+  const payload: any = {
     name: poiName,
-    sn,
-    ...position,
-  });
+  };
+  
+  // Add position data if provided
+  if (position) {
+    payload.x = position.x;
+    payload.y = position.y;
+    payload.ori = position.yaw ?? position.ori ?? 0; // Support both yaw and ori
+  }
+  
+  // Add robot SN if provided
+  if (sn) {
+    payload.sn = sn;
+  }
+  
+  const response = await api.post("/api/v1/robot/set/poi", payload);
+  return response.data;
+};
+
+/**
+ * Delete a POI
+ * @param poiName POI name
+ */
+export const deletePOI = async (poiName: string) => {
+  const response = await api.delete(`/api/v1/poi/delete/${poiName}`);
+  return response.data;
+};
+
+/**
+ * Update a POI
+ * @param poiName POI name
+ * @param updateData Data to update
+ */
+export const updatePOI = async (poiName: string, updateData: any) => {
+  const response = await api.put(`/api/v1/poi/update/${poiName}`, updateData);
   return response.data;
 };
 
@@ -137,38 +153,21 @@ export const setPOI = async (poiName: string, sn?: string, position?: any) => {
 // TASK MANAGEMENT APIs
 // ============================================================================
 
-/**
- * Get task history
- */
 export const getTaskHistory = async () => {
   const response = await api.get("/api/v1/robot/get/task_history");
   return response.data;
 };
 
-/**
- * Get specific task details
- * @param taskId Task ID
- */
 export const getTaskDetails = async (taskId: string) => {
   const response = await api.get(`/api/v1/robot/get/task/${taskId}`);
   return response.data;
 };
 
-/**
- * Cancel a running task
- * @param sn Robot serial number
- */
 export const cancelTask = async (sn: string) => {
   const response = await api.post("/api/v1/robot/cancel/task", { sn });
   return response.data;
 };
 
-/**
- * Dispatch a task to a robot
- * @param taskType Type of task (goto, patrol, etc)
- * @param sn Robot serial number
- * @param params Task parameters
- */
 export const dispatchTask = async (taskType: string, sn: string, params: any) => {
   const response = await api.post("/api/v1/robot/dispatch/task", {
     task_type: taskType,
@@ -178,9 +177,6 @@ export const dispatchTask = async (taskType: string, sn: string, params: any) =>
   return response.data;
 };
 
-/**
- * Cancel ongoing movement (AMR/Fielder)
- */
 export const cancelMove = async () => {
   const response = await api.post("/api/v1/robot/control/cancel");
   return response.data;
@@ -190,11 +186,6 @@ export const cancelMove = async () => {
 // TEMI ROBOT CONTROL APIs
 // ============================================================================
 
-/**
- * Move Temi robot to a POI
- * @param sn Robot serial number
- * @param poiName Target POI name
- */
 export const moveTemiToPOI = async (sn: string, poiName: string) => {
   const response = await api.post("/api/v1/robot/temi/command/goto", {
     sn,
@@ -203,21 +194,11 @@ export const moveTemiToPOI = async (sn: string, poiName: string) => {
   return response.data;
 };
 
-/**
- * Stop Temi robot
- * @param sn Robot serial number
- */
 export const stopTemi = async (sn: string) => {
   const response = await api.post("/api/v1/robot/temi/command/stop", { sn });
   return response.data;
 };
 
-/**
- * Manual control for Temi robot
- * @param sn Robot serial number
- * @param linearVelocity Linear velocity (-1 to 1)
- * @param angularVelocity Angular velocity (-1 to 1)
- */
 export const controlTemiManual = async (
   sn: string,
   linearVelocity: number,
@@ -231,11 +212,6 @@ export const controlTemiManual = async (
   return response.data;
 };
 
-/**
- * Make Temi robot speak (TTS)
- * @param sn Robot serial number
- * @param text Text to speak
- */
 export const makeTemiSpeak = async (sn: string, text: string) => {
   const response = await api.post("/api/v1/robot/temi/command/tts", {
     sn,
@@ -244,11 +220,6 @@ export const makeTemiSpeak = async (sn: string, text: string) => {
   return response.data;
 };
 
-/**
- * Tilt Temi's head
- * @param sn Robot serial number
- * @param angle Tilt angle
- */
 export const tiltTemiHead = async (sn: string, angle: number) => {
   const response = await api.post("/api/v1/robot/temi/command/tilt", {
     sn,
@@ -261,13 +232,6 @@ export const tiltTemiHead = async (sn: string, angle: number) => {
 // AMR/FIELDER ROBOT CONTROL APIs
 // ============================================================================
 
-/**
- * Move AMR/Fielder to coordinates
- * @param sn Robot serial number
- * @param x X coordinate
- * @param y Y coordinate
- * @param yaw Yaw angle (optional)
- */
 export const moveAMRToCoordinates = async (
   sn: string,
   x: number,
@@ -283,11 +247,6 @@ export const moveAMRToCoordinates = async (
   return response.data;
 };
 
-/**
- * Move AMR/Fielder to POI
- * @param sn Robot serial number
- * @param poiName Target POI name
- */
 export const moveAMRToPOI = async (sn: string, poiName: string) => {
   const response = await api.post("/api/v1/robot/control/goto", {
     sn,
@@ -296,12 +255,6 @@ export const moveAMRToPOI = async (sn: string, poiName: string) => {
   return response.data;
 };
 
-/**
- * Manual control for AMR/Fielder
- * @param sn Robot serial number
- * @param linearVelocity Linear velocity
- * @param angularVelocity Angular velocity
- */
 export const controlAMRManual = async (
   sn: string,
   linearVelocity: number,
@@ -315,31 +268,19 @@ export const controlAMRManual = async (
   return response.data;
 };
 
-/**
- * Stop AMR/Fielder movement
- * @param sn Robot serial number
- */
 export const stopAMR = async (sn: string) => {
   const response = await api.post("/api/v1/robot/control/stop", { sn });
   return response.data;
 };
 
-/**
- * Send manual control command (generic for both robot types)
- * @param linear Linear velocity
- * @param angular Angular velocity
- * @param sn Robot serial number (optional, mainly for Temi)
- */
 export const sendManualControl = async (
   linear: number,
   angular: number,
   sn?: string
 ) => {
   if (sn) {
-    // Temi robot
     return controlTemiManual(sn, linear, angular);
   } else {
-    // AMR/Fielder robot - might need different endpoint
     const response = await api.post("/api/v1/robot/control/manual", {
       linear_velocity: linear,
       angular_velocity: angular,
@@ -348,9 +289,6 @@ export const sendManualControl = async (
   }
 };
 
-/**
- * Enable remote control mode (mainly for AMR/Fielder)
- */
 export const enableRemoteControl = async () => {
   const response = await api.post("/api/v1/robot/control/enable_remote");
   return response.data;
@@ -360,12 +298,6 @@ export const enableRemoteControl = async () => {
 // UTILITY FUNCTIONS
 // ============================================================================
 
-/**
- * Generic robot movement to POI (auto-detects robot type)
- * @param sn Robot serial number
- * @param poiName Target POI name
- * @param robotType Robot type (TEMI, AMR, FIELDER)
- */
 export const moveToPOI = async (
   sn: string,
   poiName: string,
@@ -378,11 +310,6 @@ export const moveToPOI = async (
   }
 };
 
-/**
- * Generic robot stop (auto-detects robot type)
- * @param sn Robot serial number
- * @param robotType Robot type (TEMI, AMR, FIELDER)
- */
 export const stopRobot = async (sn: string, robotType: string) => {
   if (robotType.toUpperCase() === "TEMI") {
     return stopTemi(sn);
@@ -391,13 +318,6 @@ export const stopRobot = async (sn: string, robotType: string) => {
   }
 };
 
-/**
- * Generic manual control (auto-detects robot type)
- * @param sn Robot serial number
- * @param linearVelocity Linear velocity
- * @param angularVelocity Angular velocity
- * @param robotType Robot type (TEMI, AMR, FIELDER)
- */
 export const controlRobotManual = async (
   sn: string,
   linearVelocity: number,
@@ -411,18 +331,9 @@ export const controlRobotManual = async (
   }
 };
 
-/**
- * Alias for getRobotList (for backward compatibility)
- */
 export const getRegisteredRobots = getRobotList;
 
-/**
- * Move robot to charging station
- * @param sn Robot serial number
- * @param robotType Robot type
- */
 export const moveToCharge = async (sn: string, robotType: string) => {
-  // Use the appropriate method based on robot type
   if (robotType.toUpperCase() === "TEMI") {
     return moveTemiToPOI(sn, "home_base");
   } else {
@@ -430,30 +341,45 @@ export const moveToCharge = async (sn: string, robotType: string) => {
   }
 };
 
-/**
- * Get robot location/position
- * @param sn Robot serial number
- */
 export const getRobotLocation = async (sn: string) => {
   const status = await getRobotStatus(sn);
   return status.robotStatus?.position || { x: 0, y: 0, yaw: 0 };
 };
 
-/**
- * Check API health status
- */
 export const checkHealth = async () => {
-  const response = await api.get("/api/health");
-  return response.data;
+  try {
+    const response = await api.get("/health");
+    return response.status === 200;
+  } catch {
+    return false;
+  }
 };
 
-/**
- * Create WebSocket connection for robot status updates
- * @param sn Robot serial number
- */
 export const createRobotStatusWebSocket = (sn: string) => {
   const wsUrl = API_BASE_URL.replace('http://', 'ws://').replace('https://', 'wss://');
   return new WebSocket(`${wsUrl}/ws/robot/${sn}`);
+};
+
+/**
+ * ✅ NEW: Move robot to exact coordinates
+ * @param x X coordinate
+ * @param y Y coordinate
+ * @param ori Orientation
+ * @param sn Robot serial number (optional)
+ */
+export const moveToCoordinate = async (
+  x: number,
+  y: number,
+  ori: number = 0,
+  sn?: string
+) => {
+  const response = await api.post("/api/v1/robot/control/move_coordinate", {
+    x,
+    y,
+    ori,
+    sn,
+  });
+  return response.data;
 };
 
 // ============================================================================
@@ -474,6 +400,8 @@ export default {
   addPOI,
   getTemiLocations,
   setPOI,
+  deletePOI,
+  updatePOI,
 
   // Task Management
   getTaskHistory,
@@ -501,10 +429,9 @@ export default {
   moveToPOI,
   stopRobot,
   controlRobotManual,
-  
-  // Additional Utility Methods
   moveToCharge,
   getRobotLocation,
   checkHealth,
   createRobotStatusWebSocket,
+  moveToCoordinate,
 };

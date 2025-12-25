@@ -1,5 +1,5 @@
-// src/pages/Monitor.tsx
-import React, { useEffect, useState } from "react";
+// src/pages/Monitor.tsx - FIXED WITH ZOOM AND MAP UPLOAD
+import React, { useEffect, useState, useRef } from "react";
 import {
   Battery,
   Wifi,
@@ -12,10 +12,15 @@ import {
   RefreshCw,
   Activity,
   Zap,
-  TrendingUp,
   Radio,
+  Upload,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Download,
+  X,
 } from "lucide-react";
-import api from "../services/api";  // ✅ ONLY FIX - Changed from { api }
+import api from "../services/api";
 import { robotStatusService } from "../services/robotStatusService";
 
 /* ---------- Types ------------------------------------------------------ */
@@ -103,6 +108,18 @@ const Monitor: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  
+  // Map state
+  const [mapImage, setMapImage] = useState<string | null>(
+    localStorage.getItem("fleet_map_image")
+  );
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   /* ---------------- Data fetching ------------------------------------- */
   const fetchRobots = async () => {
@@ -128,18 +145,11 @@ const Monitor: React.FC = () => {
             const position = status?.position || status?.robotStatus?.position || { x: 0, y: 0 };
             
             // Convert to map coordinates (0-100 range for percentage positioning)
-            // If coordinates are in meters, scale them appropriately
-            const mapX = position.x !== 0 ? 50 + (position.x * 5) : 50;  // Scale: 1m = 5% of map
-            const mapY = position.y !== 0 ? 50 - (position.y * 5) : 50;  // Invert Y-axis for display
+            const mapX = position.x !== 0 ? 50 + (position.x * 5) : 50;
+            const mapY = position.y !== 0 ? 50 - (position.y * 5) : 50;
             
-            // Keep coordinates within bounds
             const boundedX = Math.max(5, Math.min(95, mapX));
             const boundedY = Math.max(5, Math.min(95, mapY));
-
-            console.log(`Robot ${r.data.sn} position:`, {
-              raw: position,
-              mapped: { x: boundedX, y: boundedY }
-            });
 
             return {
               id: r.data.sn,
@@ -148,8 +158,8 @@ const Monitor: React.FC = () => {
               battery: status?.robotStatus?.power ?? 0,
               lastSeen: new Date().toISOString(),
               position: {
-                x: boundedX,  // ✅ REAL COORDINATES
-                y: boundedY,  // ✅ REAL COORDINATES
+                x: boundedX,
+                y: boundedY,
               },
               signal: isOnline ? 85 + Math.random() * 15 : 0,
               task: isOnline ? "Idle" : "Offline",
@@ -189,15 +199,13 @@ const Monitor: React.FC = () => {
   /* ---------------- Lifecycle ----------------------------------------- */
   useEffect(() => {
     fetchRobots();
-    const interval = setInterval(fetchRobots, 30000); // Reduced polling
+    const interval = setInterval(fetchRobots, 30000);
     return () => clearInterval(interval);
   }, []);
 
   /* ---------------- WebSocket for real-time updates ------------------ */
   useEffect(() => {
     const unsubscribe = robotStatusService.subscribe((data) => {
-      console.log("Monitor received WebSocket status:", data);
-
       let status: "online" | "offline" | "idle" | "charging";
 
       if (data.status === "charging") {
@@ -252,6 +260,85 @@ const Monitor: React.FC = () => {
       unsubscribe();
     };
   }, [selectedRobot?.id]);
+
+  /* ---------------- Map Controls -------------------------------------- */
+  const handleZoomIn = () => {
+    setZoom((prev) => Math.min(prev + 0.2, 3));
+  };
+
+  const handleZoomOut = () => {
+    setZoom((prev) => Math.max(prev - 0.2, 0.5));
+  };
+
+  const handleResetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging) {
+      setPan({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y,
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    setZoom((prev) => Math.max(0.5, Math.min(3, prev + delta)));
+  };
+
+  /* ---------------- Map Image Upload ---------------------------------- */
+  const handleMapImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const imageData = event.target?.result as string;
+      setMapImage(imageData);
+      localStorage.setItem("fleet_map_image", imageData);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDownloadMapFromRobot = async () => {
+    try {
+      // This would fetch the map from the Fielder robot
+      // For now, this is a placeholder - you'll need to implement the actual API call
+      const response = await fetch("http://192.168.0.250:8090/map/image");
+      const blob = await response.blob();
+      const imageUrl = URL.createObjectURL(blob);
+      setMapImage(imageUrl);
+      
+      // Convert to base64 for localStorage
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        localStorage.setItem("fleet_map_image", base64);
+      };
+      reader.readAsDataURL(blob);
+    } catch (error) {
+      console.error("Failed to download map from robot:", error);
+      alert("Failed to download map from robot. Make sure the robot is online and accessible.");
+    }
+  };
+
+  const handleRemoveMapImage = () => {
+    setMapImage(null);
+    localStorage.removeItem("fleet_map_image");
+  };
 
   /* ---------------- Derived state ------------------------------------- */
   const onlineCount = robots.filter((r) => r.status === "online").length;
@@ -482,136 +569,244 @@ const Monitor: React.FC = () => {
 
           {/* Map and Details */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Map */}
+            {/* Map with Zoom Controls */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <div className="mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">
-                  Live Map
-                </h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Real-time robot positions
-                </p>
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    Live Map
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Real-time robot positions
+                  </p>
+                </div>
+                
+                {/* Map Controls */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200"
+                    title="Upload Map Image"
+                  >
+                    <Upload className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleDownloadMapFromRobot}
+                    className="p-2 bg-purple-100 text-purple-600 rounded-lg hover:bg-purple-200"
+                    title="Get Map from Robot"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                  {mapImage && (
+                    <button
+                      onClick={handleRemoveMapImage}
+                      className="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200"
+                      title="Remove Map Image"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                  <div className="h-6 w-px bg-gray-300" />
+                  <button
+                    onClick={handleZoomIn}
+                    className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
+                    title="Zoom In"
+                  >
+                    <ZoomIn className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleZoomOut}
+                    className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
+                    title="Zoom Out"
+                  >
+                    <ZoomOut className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleResetView}
+                    className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
+                    title="Reset View"
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                  </button>
+                  <span className="text-xs text-gray-500 ml-2">
+                    {Math.round(zoom * 100)}%
+                  </span>
+                </div>
+              </div>
+              
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleMapImageUpload}
+                className="hidden"
+              />
+
+              <div
+                ref={mapContainerRef}
+                className="relative w-full h-96 bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg border-2 border-gray-200 overflow-hidden cursor-move"
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                onWheel={handleWheel}
+              >
+                {/* Map Content with Transform */}
+                <div
+                  style={{
+                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                    transformOrigin: 'center',
+                    transition: isDragging ? 'none' : 'transform 0.1s',
+                    width: '100%',
+                    height: '100%',
+                    position: 'relative',
+                  }}
+                >
+                  {/* Background Map Image */}
+                  {mapImage && (
+                    <img
+                      src={mapImage}
+                      alt="Fleet Map"
+                      className="absolute inset-0 w-full h-full object-contain"
+                      style={{ pointerEvents: 'none' }}
+                    />
+                  )}
+                  
+                  {/* Grid overlay (only if no map image) */}
+                  {!mapImage && (
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        backgroundImage: `
+                          linear-gradient(to right, #e5e7eb 1px, transparent 1px),
+                          linear-gradient(to bottom, #e5e7eb 1px, transparent 1px)
+                        `,
+                        backgroundSize: "40px 40px",
+                      }}
+                    />
+                  )}
+
+                  {/* Floor plan lines (only if no map image) */}
+                  {!mapImage && (
+                    <svg
+                      className="absolute inset-0 w-full h-full"
+                      style={{ pointerEvents: "none" }}
+                    >
+                      <line
+                        x1="25%"
+                        y1="0"
+                        x2="25%"
+                        y2="60%"
+                        stroke="#9ca3af"
+                        strokeWidth="2"
+                      />
+                      <line
+                        x1="25%"
+                        y1="60%"
+                        x2="0"
+                        y2="60%"
+                        stroke="#9ca3af"
+                        strokeWidth="2"
+                      />
+                      <line
+                        x1="55%"
+                        y1="0"
+                        x2="55%"
+                        y2="75%"
+                        stroke="#9ca3af"
+                        strokeWidth="2"
+                      />
+                      <line
+                        x1="0"
+                        y1="30%"
+                        x2="100%"
+                        y2="30%"
+                        stroke="#9ca3af"
+                        strokeWidth="2"
+                      />
+                      <line
+                        x1="40%"
+                        y1="30%"
+                        x2="40%"
+                        y2="100%"
+                        stroke="#9ca3af"
+                        strokeWidth="2"
+                      />
+                      <line
+                        x1="75%"
+                        y1="15%"
+                        x2="75%"
+                        y2="75%"
+                        stroke="#9ca3af"
+                        strokeWidth="2"
+                      />
+                    </svg>
+                  )}
+
+                  {/* Zone labels (only if no map image) */}
+                  {!mapImage && (
+                    <>
+                      <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm">
+                        <span className="text-xs font-medium text-gray-700">
+                          Zone A
+                        </span>
+                      </div>
+                      <div className="absolute top-4 right-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm">
+                        <span className="text-xs font-medium text-gray-700">
+                          Zone B
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Robots */}
+                  {robots.map((robot) => (
+                    <div
+                      key={robot.id}
+                      className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all duration-500 ${
+                        selectedRobot?.id === robot.id ? "z-10 scale-110" : "z-0"
+                      }`}
+                      style={{
+                        left: `${robot.position.x}%`,
+                        top: `${robot.position.y}%`,
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <div
+                        className={`relative w-10 h-10 rounded-full shadow-lg flex items-center justify-center ${getStatusColor(
+                          robot.status
+                        )} ${
+                          selectedRobot?.id === robot.id
+                            ? "ring-4 ring-blue-600 ring-opacity-50"
+                            : ""
+                        }`}
+                      >
+                        <Activity className="w-5 h-5 text-white" />
+
+                        {/* Status indicator */}
+                        <div
+                          className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${getStatusColor(
+                            robot.status
+                          )}`}
+                        />
+                      </div>
+
+                      {/* Robot label */}
+                      <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white/95 backdrop-blur px-2 py-1 rounded shadow-sm whitespace-nowrap">
+                        <span className="text-xs font-medium text-gray-900">
+                          {robot.name}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              <div className="relative w-full h-96 bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg border-2 border-gray-200 overflow-hidden">
-                {/* Grid overlay */}
-                <div
-                  className="absolute inset-0"
-                  style={{
-                    backgroundImage: `
-                    linear-gradient(to right, #e5e7eb 1px, transparent 1px),
-                    linear-gradient(to bottom, #e5e7eb 1px, transparent 1px)
-                  `,
-                    backgroundSize: "40px 40px",
-                  }}
-                />
-
-                {/* Floor plan lines */}
-                <svg
-                  className="absolute inset-0 w-full h-full"
-                  style={{ pointerEvents: "none" }}
-                >
-                  <line
-                    x1="25%"
-                    y1="0"
-                    x2="25%"
-                    y2="60%"
-                    stroke="#9ca3af"
-                    strokeWidth="2"
-                  />
-                  <line
-                    x1="25%"
-                    y1="60%"
-                    x2="0"
-                    y2="60%"
-                    stroke="#9ca3af"
-                    strokeWidth="2"
-                  />
-                  <line
-                    x1="55%"
-                    y1="0"
-                    x2="55%"
-                    y2="75%"
-                    stroke="#9ca3af"
-                    strokeWidth="2"
-                  />
-                  <line
-                    x1="0"
-                    y1="30%"
-                    x2="100%"
-                    y2="30%"
-                    stroke="#9ca3af"
-                    strokeWidth="2"
-                  />
-                  <line
-                    x1="40%"
-                    y1="30%"
-                    x2="40%"
-                    y2="100%"
-                    stroke="#9ca3af"
-                    strokeWidth="2"
-                  />
-                  <line
-                    x1="75%"
-                    y1="15%"
-                    x2="75%"
-                    y2="75%"
-                    stroke="#9ca3af"
-                    strokeWidth="2"
-                  />
-                </svg>
-
-                {/* Zone labels */}
-                <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm">
-                  <span className="text-xs font-medium text-gray-700">
-                    Zone A
-                  </span>
-                </div>
-                <div className="absolute top-4 right-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm">
-                  <span className="text-xs font-medium text-gray-700">
-                    Zone B
-                  </span>
-                </div>
-
-                {/* Robots */}
-                {robots.map((robot) => (
-                  <div
-                    key={robot.id}
-                    className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all duration-500 ${
-                      selectedRobot?.id === robot.id ? "z-10 scale-110" : "z-0"
-                    }`}
-                    style={{
-                      left: `${robot.position.x}%`,
-                      top: `${robot.position.y}%`,
-                    }}
-                  >
-                    <div
-                      className={`relative w-10 h-10 rounded-full shadow-lg flex items-center justify-center ${getStatusColor(
-                        robot.status
-                      )} ${
-                        selectedRobot?.id === robot.id
-                          ? "ring-4 ring-blue-600 ring-opacity-50"
-                          : ""
-                      }`}
-                    >
-                      <Activity className="w-5 h-5 text-white" />
-
-                      {/* Status indicator */}
-                      <div
-                        className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${getStatusColor(
-                          robot.status
-                        )}`}
-                      />
-                    </div>
-
-                    {/* Robot label */}
-                    <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white/95 backdrop-blur px-2 py-1 rounded shadow-sm whitespace-nowrap">
-                      <span className="text-xs font-medium text-gray-900">
-                        {robot.name}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+              {/* Map Instructions */}
+              <div className="mt-4 text-xs text-gray-500 space-y-1">
+                <p>• Scroll to zoom in/out</p>
+                <p>• Click and drag to pan the map</p>
+                <p>• Upload custom map or download from robot</p>
               </div>
 
               {/* Legend */}
