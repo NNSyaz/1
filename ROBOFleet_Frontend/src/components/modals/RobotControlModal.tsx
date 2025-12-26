@@ -37,10 +37,12 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   const [currentAngular, setCurrentAngular] = useState(0);
   
   // Keyboard control refs
-  const keysPressed = useRef<Set<string>>(new Set());
   const lastCommandTime = useRef<number>(0);
   
   const isTemi = robot.model?.toUpperCase() === "TEMI";
+
+  const controlIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const keysPressed = useRef<Set<string>>(new Set());
   
   // Keyboard control implementation
   const sendControlCommand = async (linear: number, angular: number) => {
@@ -88,22 +90,16 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     
     setCurrentLinear(linear);
     setCurrentAngular(angular);
-    
-    if (manualActive) {
-      sendControlCommand(linear, angular);
-    }
+    return { linear, angular };
   };
   
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!manualActive) return;
-    
     const key = e.key.toLowerCase();
     if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
       e.preventDefault();
       keysPressed.current.add(key);
-      updateMovement();
     }
-    
     if (e.key === " ") {
       e.preventDefault();
       handleManualStop();
@@ -112,19 +108,14 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   
   const handleKeyUp = (e: KeyboardEvent) => {
     if (!manualActive) return;
-    
     const key = e.key.toLowerCase();
-    if (keysPressed.current.has(key)) {
-      keysPressed.current.delete(key);
-      updateMovement();
-    }
+    keysPressed.current.delete(key);
   };
   
   useEffect(() => {
     if (manualActive) {
       window.addEventListener("keydown", handleKeyDown);
       window.addEventListener("keyup", handleKeyUp);
-      
       return () => {
         window.removeEventListener("keydown", handleKeyDown);
         window.removeEventListener("keyup", handleKeyUp);
@@ -133,20 +124,28 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   }, [manualActive, linearSpeed, angularSpeed]);
   
   useEffect(() => {
+    return () => {
+      if (controlIntervalRef.current) {
+        clearInterval(controlIntervalRef.current);
+      }
+      if (manualActive) {
+        sendControlCommand(0, 0);
+      }
+    };
+  }, []);
+  
+  useEffect(() => {
     loadAllPOIs();
     loadPosition();
     const interval = setInterval(loadPosition, 3000);
     return () => clearInterval(interval);
   }, [robot.sn]);
   
-  // Load all POIs from database
   const loadAllPOIs = async () => {
     try {
       const poisData = await api.getPOIList();
       setAllPOIs(poisData);
-      console.log("✅ Loaded POIs:", poisData);
     } catch (error) {
-      console.error("❌ Failed to load POIs:", error);
       toast.error("Failed to load locations");
     }
   };
@@ -164,7 +163,6 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     }
   };
   
-  // ✅ FIX: Handle navigation with proper routing
   const handleGoToLocation = async () => {
     if (!selectedPoi) {
       toast.error("Please select a location");
@@ -173,50 +171,15 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     
     try {
       setLoading(true);
+      const result = await api.moveToPOI(robot.sn, selectedPoi, robot.model);
       
-      if (isTemi) {
-        // ✅ Temi: Use Temi goto endpoint
-        const response = await fetch('http://192.168.0.183:8000/api/v1/robot/temi/command/goto', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sn: robot.sn,
-            location: selectedPoi,
-            speed: speed
-          })
-        });
-        
-        const result = await response.json();
-        
-        if (result.status === 200) {
-          toast.success(`✅ Temi moving to ${selectedPoi}`);
-        } else {
-          toast.error(result.msg || "Failed to move");
-        }
+      if (result.status === 200) {
+        toast.success(`✅ Moving to ${selectedPoi}`);
+        if (onSuccess) onSuccess();
       } else {
-        // ✅ Fielder/AMR: Use task dispatcher
-        const response = await fetch('http://192.168.0.183:8000/api/v1/task/dispatch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            task_type: 'goto',
-            robot_sn: robot.sn,
-            location: selectedPoi
-          })
-        });
-        
-        const result = await response.json();
-        
-        if (result.status === 200) {
-          toast.success(`✅ Fielder moving to ${selectedPoi}`);
-        } else {
-          toast.error(result.msg || "Failed to move");
-        }
+        toast.error(result.msg || "Failed to move");
       }
-      
-      if (onSuccess) onSuccess();
     } catch (error: any) {
-      console.error("❌ Navigation error:", error);
       toast.error(error.message || "Failed to navigate");
     } finally {
       setLoading(false);
@@ -226,17 +189,9 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   const handleStop = async () => {
     try {
       if (isTemi) {
-        // ✅ Temi stop
-        await fetch('http://192.168.0.183:8000/api/v1/robot/temi/command/stop', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sn: robot.sn })
-        });
+        await api.stopTemi(robot.sn);
       } else {
-        // ✅ AMR/Fielder stop
-        await fetch('http://192.168.0.183:8000/api/v1/robot/cancel/task', {
-          method: 'GET'
-        });
+        await api.cancelTask();
       }
       toast.success("Robot stopped");
     } catch (error: any) {
@@ -244,49 +199,47 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     }
   };
   
-  // ✅ FIX: TTS function with proper endpoint
   const handleSpeak = async () => {
     if (!ttsText || !isTemi) {
-      if (!isTemi) {
-        toast.error("TTS is only available for Temi robots");
-      }
+      if (!isTemi) toast.error("TTS only for Temi");
       return;
     }
     
     try {
       setLoading(true);
-      
-      // ✅ Use correct Temi TTS endpoint
-      const response = await fetch('http://192.168.0.183:8000/api/v1/robot/temi/command/speak', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sn: robot.sn,
-          text: ttsText,
-          show_text: true
-        })
-      });
-      
-      const result = await response.json();
+      const result = await api.makeTemiSpeak(robot.sn, ttsText);
       
       if (result.status === 200) {
         toast.success("✅ Speaking...");
         setTtsText("");
       } else {
-        toast.error(result.msg || "Failed to speak");
+        toast.error(result.msg || "Failed");
       }
-    } catch (error: any) {
-      console.error("❌ TTS error:", error);
-      toast.error(error.message || "Failed to speak");
     } finally {
       setLoading(false);
     }
   };
   
-  const startManualControl = () => {
-    setManualActive(true);
-    keysPressed.current.clear();
-    toast.success("🎮 Manual control active - Use WASD or Arrow keys");
+  const startManualControl = async () => {
+    try {
+      // ✅ Enable remote control for Fielder
+      if (!isTemi) {
+        await api.enableRemoteControl();
+      }
+      
+      setManualActive(true);
+      keysPressed.current.clear();
+      toast.success("🎮 Manual control active");
+      
+      // ✅ Send commands every 100ms (same as RoboFleet.html)
+      controlIntervalRef.current = setInterval(() => {
+        const { linear, angular } = updateMovement();
+        sendControlCommand(linear, angular);
+      }, 100);
+      
+    } catch (error: any) {
+      toast.error("Failed to start control: " + error.message);
+    }
   };
   
   const stopManualControl = async () => {
@@ -294,9 +247,16 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     keysPressed.current.clear();
     setCurrentLinear(0);
     setCurrentAngular(0);
+    
+    if (controlIntervalRef.current) {
+      clearInterval(controlIntervalRef.current);
+      controlIntervalRef.current = null;
+    }
+    
     await sendControlCommand(0, 0);
     toast("Manual control stopped");
   };
+
   
   const handleManualMove = (linear: number, angular: number) => {
     const finalLinear = linear * linearSpeed;
@@ -312,99 +272,42 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     setCurrentAngular(0);
     sendControlCommand(0, 0);
   };
-  
   // Save current position as POI
   const handleSaveAsPOI = async () => {
     if (!position) {
-      toast.error("No position data available");
+      toast.error("No position data");
       return;
     }
     
-    const poiName = prompt(
-      `Save current position as POI?\n\nX: ${position.x?.toFixed(3)}\nY: ${position.y?.toFixed(3)}\nYaw: ${(position.yaw || position.ori || 0).toFixed(3)}\n\nEnter location name:`
-    );
-    
+    const poiName = prompt(`Save as POI?\nX: ${position.x?.toFixed(3)}\nY: ${position.y?.toFixed(3)}\n\nEnter name:`);
     if (!poiName) return;
     
     try {
       setLoading(true);
-      
-      // ✅ Use correct POI save endpoint
-      const response = await fetch('http://192.168.0.183:8000/api/v1/robot/set/poi', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: poiName,
-          x: position.x || 0,
-          y: position.y || 0,
-          ori: position.yaw || position.ori || 0
-        })
-      });
-      
-      const result = await response.json();
+      const result = await api.setPOI(poiName, robot.sn, position);
       
       if (result.status === 200) {
-        toast.success(`✅ POI "${poiName}" saved! Available for all robots.`);
+        toast.success(`✅ POI "${poiName}" saved!`);
         await loadAllPOIs();
       } else {
-        toast.error(result.msg || "Failed to save POI");
+        toast.error(result.msg || "Failed to save");
       }
-    } catch (error: any) {
-      console.error("❌ Save POI error:", error);
-      toast.error(error.message || "Failed to save POI");
     } finally {
       setLoading(false);
     }
   };
-  
   // ✅ FIX: Move to charge with correct locations
   const handleMoveToCharge = async () => {
     try {
       setLoading(true);
+      const result = await api.moveToCharge(robot.sn, robot.model);
       
-      if (isTemi) {
-        // ✅ Temi: Go to "home base"
-        const response = await fetch('http://192.168.0.183:8000/api/v1/robot/temi/command/goto', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sn: robot.sn,
-            location: "home base"
-          })
-        });
-        
-        const result = await response.json();
-        
-        if (result.status === 200) {
-          toast.success("✅ Moving to home base");
-        } else {
-          toast.error("Home base location not found. Please save it first.");
-        }
+      if (result.status === 200) {
+        toast.success(`✅ Moving to ${isTemi ? "home base" : "origin"}`);
+        if (onSuccess) onSuccess();
       } else {
-        // ✅ Fielder: Go to "origin"
-        const response = await fetch('http://192.168.0.183:8000/api/v1/task/dispatch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            task_type: 'goto',
-            robot_sn: robot.sn,
-            location: 'origin'
-          })
-        });
-        
-        const result = await response.json();
-        
-        if (result.status === 200) {
-          toast.success("✅ Moving to origin");
-        } else {
-          toast.error("Origin location not found. Please save it first.");
-        }
+        toast.error(result.msg || "Charging location not found");
       }
-      
-      if (onSuccess) onSuccess();
-    } catch (error: any) {
-      console.error("❌ Move to charge error:", error);
-      toast.error(error.message || "Failed to move to charging station");
     } finally {
       setLoading(false);
     }

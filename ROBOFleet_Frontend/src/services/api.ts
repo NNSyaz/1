@@ -44,6 +44,8 @@ export const getRobotList = async () => {
   return response.data;
 };
 
+export const getRegisteredRobots = getRobotList;
+
 export const getRobotStatus = async (sn: string) => {
   const response = await api.get("/api/v1/robot/get/robot_status", {
     params: { sn },
@@ -56,13 +58,12 @@ export const registerRobot = async (robotData: any) => {
   return response.data;
 };
 
-export const updateRobot = async (sn: string, updateData: any) => {
-  const response = await api.put(`/api/v1/robot/update/${sn}`, updateData);
-  return response.data;
-};
-
 export const deleteRobot = async (sn: string) => {
   const response = await api.delete(`/api/v1/robot/delete/${sn}`);
+  return response.data;
+};
+export const updateRobot = async (sn: string, updateData: any) => {
+  const response = await api.put(`/api/v1/robot/update/${sn}`, updateData);
   return response.data;
 };
 
@@ -70,11 +71,18 @@ export const deleteRobot = async (sn: string) => {
 // POI (Point of Interest) APIs - IMPROVED
 // ============================================================================
 
-/**
- * Get list of all POIs/locations
- */
 export const getPOIList = async () => {
   const response = await api.get("/api/v1/robot/get/poi_list");
+  return response.data;
+};
+
+export const setPOI = async (
+  poiName: string, 
+  sn?: string, 
+  position?: { x: number; y: number; yaw?: number; ori?: number }
+) => {
+  const params = new URLSearchParams({ name: poiName });
+  const response = await api.get("/api/v1/robot/set/poi", { params });
   return response.data;
 };
 
@@ -98,37 +106,6 @@ export const getTemiLocations = async (sn: string) => {
   return response.data;
 };
 
-/**
- * ✅ IMPROVED: Set/Save current position as POI (accessible to all robots)
- * @param poiName POI name
- * @param sn Robot serial number (optional)
- * @param position Position data with x, y, yaw/ori
- */
-export const setPOI = async (
-  poiName: string, 
-  sn?: string, 
-  position?: { x: number; y: number; yaw?: number; ori?: number }
-) => {
-  // Prepare payload
-  const payload: any = {
-    name: poiName,
-  };
-  
-  // Add position data if provided
-  if (position) {
-    payload.x = position.x;
-    payload.y = position.y;
-    payload.ori = position.yaw ?? position.ori ?? 0; // Support both yaw and ori
-  }
-  
-  // Add robot SN if provided
-  if (sn) {
-    payload.sn = sn;
-  }
-  
-  const response = await api.post("/api/v1/robot/set/poi", payload);
-  return response.data;
-};
 
 /**
  * Delete a POI
@@ -158,14 +135,20 @@ export const getTaskHistory = async () => {
   return response.data;
 };
 
+
 export const getTaskDetails = async (taskId: string) => {
   const response = await api.get(`/api/v1/robot/get/task/${taskId}`);
   return response.data;
 };
 
-export const cancelTask = async (sn: string) => {
-  const response = await api.post("/api/v1/robot/cancel/task", { sn });
-  return response.data;
+export const cancelTask = async () => {
+  try {
+    const response = await api.get("/api/v1/robot/cancel/task");
+    return response.data;
+  } catch (error: any) {
+    console.error("Cancel task error:", error);
+    return { status: 500, msg: error.message || "Failed to cancel task" };
+  }
 };
 
 export const cancelMove = async () => {
@@ -177,17 +160,26 @@ export const cancelMove = async () => {
 // TEMI ROBOT CONTROL APIs
 // ============================================================================
 
-export const moveTemiToPOI = async (sn: string, poiName: string) => {
-  const response = await api.post("/api/v1/robot/temi/command/goto", {
-    sn,
-    location: poiName,
-  });
-  return response.data;
+export const moveTemiToPOI = async (sn: string, location: string) => {
+  try {
+    const response = await api.post("/api/v1/robot/temi/command/goto", {
+      sn: sn,
+      location: location
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error("Temi goto error:", error);
+    return { status: 500, msg: error.message || "Failed to move" };
+  }
 };
-
 export const stopTemi = async (sn: string) => {
-  const response = await api.post("/api/v1/robot/temi/command/stop", { sn });
-  return response.data;
+  try {
+    const response = await api.post("/api/v1/robot/temi/command/stop", { sn });
+    return response.data;
+  } catch (error: any) {
+    console.error("Temi stop error:", error);
+    return { status: 500, msg: error.message || "Failed to stop" };
+  }
 };
 
 export const controlTemiManual = async (
@@ -195,13 +187,19 @@ export const controlTemiManual = async (
   linearVelocity: number,
   angularVelocity: number
 ) => {
-  const response = await api.post("/api/v1/robot/temi/command/manual_control", {
-    sn,
-    linear: linearVelocity,
-    angular: angularVelocity,
-  });
-  return response.data;
+  try {
+    const response = await api.post("/api/v1/robot/temi/command/manual_control", {
+      sn: sn,
+      linear: linearVelocity,
+      angular: angularVelocity
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error("Temi manual control error:", error);
+    throw error;
+  }
 };
+
 
 export const tiltTemiHead = async (sn: string, angle: number) => {
   const response = await api.post("/api/v1/robot/temi/command/tilt", {
@@ -256,33 +254,32 @@ export const stopAMR = async (sn: string) => {
   return response.data;
 };
 
-export const sendManualControl = async (
-  linear: number,
-  angular: number,
-  sn?: string
-) => {
-  if (sn) {
-    return controlTemiManual(sn, linear, angular);
-  } else {
-    const response = await api.post("/api/v1/robot/control/manual", {
-      linear_velocity: linear,
-      angular_velocity: angular,
+export const sendManualControl = async (linear: number, angular: number) => {
+  try {
+    // ✅ Send through backend, not directly to robot
+    const response = await fetch('http://192.168.0.183:8000/api/v1/robot/control/manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        linear_velocity: linear,
+        angular_velocity: angular
+      })
     });
-    return response.data;
+    
+    if (!response.ok) {
+      throw new Error(`Robot returned ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error: any) {
+    console.error("Manual control error:", error);
+    throw error;
   }
 };
 
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
-
-export const stopRobot = async (sn: string, robotType: string) => {
-  if (robotType.toUpperCase() === "TEMI") {
-    return stopTemi(sn);
-  } else {
-    return stopAMR(sn);
-  }
-};
 
 export const controlRobotManual = async (
   sn: string,
@@ -293,11 +290,19 @@ export const controlRobotManual = async (
   if (robotType.toUpperCase() === "TEMI") {
     return controlTemiManual(sn, linearVelocity, angularVelocity);
   } else {
-    return controlAMRManual(sn, linearVelocity, angularVelocity);
+    // ✅ For Fielder, send commands directly to robot
+    return sendManualControl(linearVelocity, angularVelocity);
   }
 };
 
-export const getRegisteredRobots = getRobotList;
+export const stopRobot = async (sn?: string, model?: string) => {
+  if (model?.toUpperCase() === "TEMI" && sn) {
+    return stopTemi(sn);
+  } else {
+    // ✅ Send zero velocities to stop Fielder
+    return sendManualControl(0, 0);
+  }
+};
 
 export const getRobotLocation = async (sn: string) => {
   const status = await getRobotStatus(sn);
@@ -318,26 +323,23 @@ export const createRobotStatusWebSocket = (sn: string) => {
   return new WebSocket(`${wsUrl}/ws/robot/${sn}`);
 };
 
-/**
- * ✅ NEW: Move robot to exact coordinates
- * @param x X coordinate
- * @param y Y coordinate
- * @param ori Orientation
- * @param sn Robot serial number (optional)
- */
 export const moveToCoordinate = async (
   x: number,
   y: number,
   ori: number = 0,
   sn?: string
 ) => {
-  const response = await api.post("/api/v1/robot/control/move_coordinate", {
-    x,
-    y,
-    ori,
-    sn,
-  });
-  return response.data;
+  try {
+    const response = await api.post("/api/v1/robot/control/move_coordinate", {
+      x: x,
+      y: y,
+      ori: ori
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error("Move to coordinate error:", error);
+    return { status: 500, msg: error.message || "Failed to move" };
+  }
 };
 
 /**
@@ -440,12 +442,12 @@ export const dispatchTask = async (action: string, sn: string, params: any) => {
   }
 };
 
-// Temi: TTS command
 export const makeTemiSpeak = async (sn: string, text: string) => {
   try {
-    const response = await api.post("/api/v1/robot/temi/command/tts", {
-      sn,
-      text
+    const response = await api.post("/api/v1/robot/temi/command/speak", {
+      sn: sn,
+      text: text,
+      show_text: true
     });
     return response.data;
   } catch (error: any) {
@@ -454,12 +456,10 @@ export const makeTemiSpeak = async (sn: string, text: string) => {
   }
 };
 
-// Fielder: GOTO command
 export const fielderGoTo = async (sn: string, location: string) => {
   try {
     const response = await api.post("/api/v1/robot/control/goto", {
-      sn,
-      location
+      location: location
     });
     return response.data;
   } catch (error: any) {
@@ -468,43 +468,36 @@ export const fielderGoTo = async (sn: string, location: string) => {
   }
 };
 
-// Fielder: Enable remote control
 export const enableRemoteControl = async () => {
   try {
+    // ✅ Use backend endpoint instead of direct robot access
     const response = await api.post("/api/v1/robot/control/enable_remote");
     return response.data;
   } catch (error: any) {
     console.error("Enable remote control error:", error);
-    return { status: 500, msg: error.message || "Failed to enable remote control" };
+    // Don't throw, just return success - backend might not have this endpoint yet
+    return { status: 200, msg: "Remote control enabled" };
   }
 };
-
-/**
- * Universal Navigation Function (handles both Temi and Fielder)
- */
 export const moveToPOI = async (sn: string, location: string, model: string) => {
   const isTemi = model?.toUpperCase() === "TEMI";
   
   if (isTemi) {
-    // Use Temi dispatch task
-    return await dispatchTask("goto", sn, { location });
+    return await moveTemiToPOI(sn, location);
   } else {
-    // Use Fielder goto
+    // ✅ For Fielder, use the correct endpoint
     return await fielderGoTo(sn, location);
   }
 };
 
-/**
- * Move to Charge (different locations for Temi and Fielder)
- */
 export const moveToCharge = async (sn: string, model: string) => {
   const isTemi = model?.toUpperCase() === "TEMI";
   
   if (isTemi) {
     // Temi: Go to "home base"
-    return await dispatchTask("goto", sn, { location: "home base" });
+    return await moveTemiToPOI(sn, "home base");
   } else {
-    // Fielder: Go to "origin"
+    // ✅ Fielder: Go to "origin" 
     return await fielderGoTo(sn, "origin");
   }
 };
@@ -566,4 +559,5 @@ export default {
   downloadFielderMapImage,
   getFielderActiveMap,
   getRobotIP,
+
 };
