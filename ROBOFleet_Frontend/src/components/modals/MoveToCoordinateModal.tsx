@@ -1,7 +1,7 @@
 // src/components/modals/MoveToCoordinateModal.tsx
 import React, { useState } from "react";
 import { X, Target } from "lucide-react";
-import { api } from "../../services/api";
+import api from "../../services/api";
 import toast from "react-hot-toast";
 
 interface MoveToCoordinateModalProps {

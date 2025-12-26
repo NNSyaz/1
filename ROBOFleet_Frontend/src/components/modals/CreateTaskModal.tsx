@@ -1,7 +1,7 @@
 // src/components/modals/CreateTaskModal.tsx
 import React, { useState, useEffect } from "react";
 import { X } from "lucide-react";
-import { api } from "../../services/api";
+import api from "../../services/api";
 import toast from "react-hot-toast";
 
 interface CreateTaskModalProps {
@@ -50,7 +50,7 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ onClose, onSuccess })
       setLoading(true);
       const result = await api.dispatchTask(
         formData.taskType,
-        formData.robot || null,
+        formData.robot,
         { location: formData.location }
       );
 
