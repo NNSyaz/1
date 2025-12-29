@@ -1,4 +1,4 @@
-// src/components/modals/RobotControlModal_FIXED.tsx
+// src/components/modals/RobotControlModal.tsx - UPDATED WITH DYNAMIC LOCATION LOADING
 import React, { useState, useEffect, useRef } from "react";
 import { X, MapPin, RefreshCw, Save, AlertTriangle } from "lucide-react";
 import api from "../../services/api";
@@ -23,7 +23,12 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   onSuccess,
 }) => {
   const [activeTab, setActiveTab] = useState<"navigation" | "manual" | "tts">("navigation");
+  
+  // ✅ NEW: Separate state for robot-fetched locations and POIs
+  const [robotLocations, setRobotLocations] = useState<any[]>([]);
   const [allPOIs, setAllPOIs] = useState<any[]>([]);
+  const [loadingLocations, setLoadingLocations] = useState(true);
+  
   const [selectedPoi, setSelectedPoi] = useState("");
   const [speed, setSpeed] = useState(1.0);
   const [loading, setLoading] = useState(false);
@@ -37,17 +42,16 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   const [currentLinear, setCurrentLinear] = useState(0);
   const [currentAngular, setCurrentAngular] = useState(0);
   
-  // Keyboard control
   const keysPressed = useRef<Set<string>>(new Set());
   const isTemi = robot.model?.toUpperCase() === "TEMI";
 
-  // Load POIs and position
+  // ✅ Load locations from robot on mount
   useEffect(() => {
-    loadAllPOIs();
+    loadRobotLocations();
     loadPosition();
     const interval = setInterval(loadPosition, 3000);
     return () => clearInterval(interval);
-  }, [robot.sn]);
+  }, [robot.sn, robot.model]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -58,12 +62,53 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     };
   }, [manualActive]);
 
-  const loadAllPOIs = async () => {
+  /**
+   * ✅ NEW: Load locations dynamically from robot
+   * - For Temi: Fetch saved locations from Temi robot itself
+   * - For Fielder: Load POIs from MongoDB
+   */
+  const loadRobotLocations = async () => {
     try {
-      const poisData = await api.getPOIList();
-      setAllPOIs(poisData);
-    } catch (error) {
-      toast.error("Failed to load locations");
+      setLoadingLocations(true);
+      
+      if (isTemi) {
+        // ✅ Get Temi's saved locations from the robot
+        console.log(`📍 Loading Temi locations for ${robot.sn}...`);
+        const temiLocs = await api.getTemiLocations(robot.sn);
+        
+        setRobotLocations(temiLocs);
+        console.log(`✅ Loaded ${temiLocs.length} Temi locations:`, temiLocs);
+        
+        if (temiLocs.length === 0) {
+          toast.error("No saved locations found on Temi robot");
+        }
+      } else {
+        // ✅ Get Fielder/AMR POIs from database
+        console.log(`📍 Loading Fielder/AMR locations...`);
+        const fielderLocs = await api.getFielderLocations();
+        
+        setRobotLocations(fielderLocs);
+        console.log(`✅ Loaded ${fielderLocs.length} Fielder locations:`, fielderLocs);
+        
+        if (fielderLocs.length === 0) {
+          toast.error("No POIs found in database");
+        }
+      }
+      
+      // Also load all POIs for reference
+      try {
+        const allPOIs = await api.getPOIList();
+        setAllPOIs(allPOIs);
+      } catch (error) {
+        console.warn("Could not load POI list:", error);
+      }
+      
+    } catch (error: any) {
+      console.error("Failed to load robot locations:", error);
+      toast.error(`Failed to load locations: ${error.message}`);
+      setRobotLocations([]);
+    } finally {
+      setLoadingLocations(false);
     }
   };
 
@@ -137,17 +182,15 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     }
   };
 
-  // ✅ FIXED MANUAL CONTROL
+  // Manual control functions (unchanged from previous version)
   const startManualControl = async () => {
     try {
       setLoading(true);
 
       if (isTemi) {
-        // Temi doesn't need special setup
         setManualActive(true);
         toast.success("🎮 Manual control active (Temi)");
       } else {
-        // Fielder: Start control service
         const started = await manualControl.start();
         
         if (started) {
@@ -185,28 +228,25 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     }
   };
 
-// ✅ CRITICAL: Continuous command sending for Fielder
-const handleManualMove = async (linear: number, angular: number) => {
-  if (!manualActive) return;
+  const handleManualMove = async (linear: number, angular: number) => {
+    if (!manualActive) return;
 
-  const finalLinear = linear * linearSpeed;
-  const finalAngular = angular * angularSpeed;
-  
-  setCurrentLinear(finalLinear);
-  setCurrentAngular(finalAngular);
+    const finalLinear = linear * linearSpeed;
+    const finalAngular = angular * angularSpeed;
+    
+    setCurrentLinear(finalLinear);
+    setCurrentAngular(finalAngular);
 
-  try {
-    if (isTemi) {
-      await api.controlTemiManual(robot.sn, finalLinear, finalAngular);
-    } else {
-      // ✅ For Fielder: Just update velocities
-      // The service will send commands continuously
-      manualControl.setVelocities(finalLinear, finalAngular);
+    try {
+      if (isTemi) {
+        await api.controlTemiManual(robot.sn, finalLinear, finalAngular);
+      } else {
+        manualControl.setVelocities(finalLinear, finalAngular);
+      }
+    } catch (error) {
+      console.error("Control command error:", error);
     }
-  } catch (error) {
-    console.error("Control command error:", error);
-  }
-};
+  };
 
   const handleManualStop = async () => {
     keysPressed.current.clear();
@@ -225,24 +265,25 @@ const handleManualMove = async (linear: number, angular: number) => {
   };
 
   const updateMovementFromKeys = () => {
-  let linear = 0;
-  let angular = 0;
+    let linear = 0;
+    let angular = 0;
 
-  if (keysPressed.current.has("w") || keysPressed.current.has("arrowup")) {
-    linear += 1;
-  }
-  if (keysPressed.current.has("s") || keysPressed.current.has("arrowdown")) {
-    linear -= 1;
-  }
-  if (keysPressed.current.has("a") || keysPressed.current.has("arrowleft")) {
-    angular += 1;
-  }
-  if (keysPressed.current.has("d") || keysPressed.current.has("arrowright")) {
-    angular -= 1;
-  }
+    if (keysPressed.current.has("w") || keysPressed.current.has("arrowup")) {
+      linear += 1;
+    }
+    if (keysPressed.current.has("s") || keysPressed.current.has("arrowdown")) {
+      linear -= 1;
+    }
+    if (keysPressed.current.has("a") || keysPressed.current.has("arrowleft")) {
+      angular += 1;
+    }
+    if (keysPressed.current.has("d") || keysPressed.current.has("arrowright")) {
+      angular -= 1;
+    }
 
-  handleManualMove(linear, angular);
-};
+    handleManualMove(linear, angular);
+  };
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!manualActive) return;
     
@@ -292,7 +333,7 @@ const handleManualMove = async (linear: number, angular: number) => {
       
       if (result.status === 200) {
         toast.success(`✅ POI "${poiName}" saved!`);
-        await loadAllPOIs();
+        await loadRobotLocations(); // Reload locations
       } else {
         toast.error(result.msg || "Failed to save");
       }
@@ -420,22 +461,64 @@ const handleManualMove = async (linear: number, angular: number) => {
         <div className="p-6">
           {activeTab === "navigation" && (
             <div className="space-y-4">
+              {/* ✅ NEW: Location Info Banner */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 text-blue-800 mb-2">
+                  <MapPin className="w-5 h-5" />
+                  <span className="font-semibold">
+                    {isTemi ? "Temi Saved Locations" : "Available POIs"}
+                  </span>
+                </div>
+                <p className="text-sm text-blue-700">
+                  {isTemi
+                    ? "Locations are fetched from the Temi robot's saved locations"
+                    : "Locations are loaded from the database POI list"}
+                </p>
+                {loadingLocations && (
+                  <div className="mt-2 flex items-center gap-2 text-blue-600">
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Loading locations...</span>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Target Location ({allPOIs.length} available)
+                  Target Location ({robotLocations.length} available)
+                  <button
+                    onClick={loadRobotLocations}
+                    className="ml-2 text-blue-600 hover:text-blue-700 text-xs"
+                    disabled={loadingLocations}
+                  >
+                    <RefreshCw className={`w-3 h-3 inline ${loadingLocations ? "animate-spin" : ""}`} />
+                  </button>
                 </label>
                 <select
                   value={selectedPoi}
                   onChange={(e) => setSelectedPoi(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={loadingLocations || robotLocations.length === 0}
                 >
-                  <option value="">Choose location...</option>
-                  {allPOIs.map((poi) => (
-                    <option key={poi.name} value={poi.name}>
-                      {poi.name} {poi.category ? `(${poi.category})` : ""}
+                  <option value="">
+                    {loadingLocations
+                      ? "Loading..."
+                      : robotLocations.length === 0
+                      ? "No locations available"
+                      : "Choose location..."}
+                  </option>
+                  {robotLocations.map((loc) => (
+                    <option key={loc.value || loc.name} value={loc.value || loc.name}>
+                      {loc.name}
                     </option>
                   ))}
                 </select>
+                {robotLocations.length === 0 && !loadingLocations && (
+                  <p className="mt-2 text-sm text-orange-600">
+                    ⚠️ {isTemi
+                      ? "No saved locations found on Temi. Save locations using the Temi tablet."
+                      : "No POIs found. Add POIs in the database first."}
+                  </p>
+                )}
               </div>
 
               {isTemi && (
@@ -458,7 +541,7 @@ const handleManualMove = async (linear: number, angular: number) => {
               <div className="flex gap-2">
                 <button
                   onClick={handleGoToLocation}
-                  disabled={loading || !selectedPoi}
+                  disabled={loading || !selectedPoi || loadingLocations}
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
                   {loading ? "Moving..." : "▶️ Go"}
@@ -483,7 +566,6 @@ const handleManualMove = async (linear: number, angular: number) => {
 
           {activeTab === "manual" && (
             <div className="space-y-4">
-              {/* ✅ UPDATED: Show remote mode requirement for Fielder */}
               {!isTemi && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                   <div className="flex items-center gap-2 text-yellow-800 mb-2">
@@ -496,6 +578,7 @@ const handleManualMove = async (linear: number, angular: number) => {
                   </p>
                 </div>
               )}
+              
               <div className={`p-4 rounded-lg border-2 ${
                 manualActive 
                   ? "bg-green-50 border-green-500" 
