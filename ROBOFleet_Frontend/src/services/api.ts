@@ -256,21 +256,12 @@ export const stopAMR = async (sn: string) => {
 
 export const sendManualControl = async (linear: number, angular: number) => {
   try {
-    // ✅ Send through backend, not directly to robot
-    const response = await fetch('http://192.168.0.183:8000/api/v1/robot/control/manual', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        linear_velocity: linear,
-        angular_velocity: angular
-      })
+    // ✅ Use backend proxy to avoid CORS
+    const response = await api.post("/api/v1/robot/control/manual", {
+      linear_velocity: linear,
+      angular_velocity: angular
     });
-    
-    if (!response.ok) {
-      throw new Error(`Robot returned ${response.status}`);
-    }
-    
-    return await response.json();
+    return response.data;
   } catch (error: any) {
     console.error("Manual control error:", error);
     throw error;
@@ -470,15 +461,15 @@ export const fielderGoTo = async (sn: string, location: string) => {
 
 export const enableRemoteControl = async () => {
   try {
-    // ✅ Use backend endpoint instead of direct robot access
     const response = await api.post("/api/v1/robot/control/enable_remote");
     return response.data;
   } catch (error: any) {
     console.error("Enable remote control error:", error);
-    // Don't throw, just return success - backend might not have this endpoint yet
     return { status: 200, msg: "Remote control enabled" };
   }
 };
+
+
 export const moveToPOI = async (sn: string, location: string, model: string) => {
   const isTemi = model?.toUpperCase() === "TEMI";
   

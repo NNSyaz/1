@@ -1,8 +1,9 @@
-// src/components/modals/RobotControlModal.tsx - FIXED VERSION
+// src/components/modals/RobotControlModal_FIXED.tsx
 import React, { useState, useEffect, useRef } from "react";
 import { X, MapPin, RefreshCw, Save } from "lucide-react";
 import api from "../../services/api";
 import toast from "react-hot-toast";
+import { manualControl } from "../../services/manualControl";
 
 interface RobotControlModalProps {
   robot: {
@@ -36,111 +37,27 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
   const [currentLinear, setCurrentLinear] = useState(0);
   const [currentAngular, setCurrentAngular] = useState(0);
   
-  // Keyboard control refs
-  const lastCommandTime = useRef<number>(0);
-  
+  // Keyboard control
+  const keysPressed = useRef<Set<string>>(new Set());
   const isTemi = robot.model?.toUpperCase() === "TEMI";
 
-  const controlIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const keysPressed = useRef<Set<string>>(new Set());
-  
-  // Keyboard control implementation
-  const sendControlCommand = async (linear: number, angular: number) => {
-    const now = Date.now();
-    if (now - lastCommandTime.current < 100) {
-      return;
-    }
-    lastCommandTime.current = now;
-    
-    try {
-      if (isTemi) {
-        await api.controlTemiManual(robot.sn, linear, angular);
-      } else {
-        // ✅ FIX: Use correct endpoint for AMR/Fielder
-        await fetch('http://192.168.0.183:8000/api/v1/robot/control/manual', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            linear_velocity: linear, 
-            angular_velocity: angular 
-          })
-        });
-      }
-    } catch (error) {
-      console.error("Control command error:", error);
-    }
-  };
-  
-  const updateMovement = () => {
-    let linear = 0;
-    let angular = 0;
-    
-    if (keysPressed.current.has("w") || keysPressed.current.has("arrowup")) {
-      linear += linearSpeed;
-    }
-    if (keysPressed.current.has("s") || keysPressed.current.has("arrowdown")) {
-      linear -= linearSpeed;
-    }
-    if (keysPressed.current.has("a") || keysPressed.current.has("arrowleft")) {
-      angular += angularSpeed;
-    }
-    if (keysPressed.current.has("d") || keysPressed.current.has("arrowright")) {
-      angular -= angularSpeed;
-    }
-    
-    setCurrentLinear(linear);
-    setCurrentAngular(angular);
-    return { linear, angular };
-  };
-  
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (!manualActive) return;
-    const key = e.key.toLowerCase();
-    if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
-      e.preventDefault();
-      keysPressed.current.add(key);
-    }
-    if (e.key === " ") {
-      e.preventDefault();
-      handleManualStop();
-    }
-  };
-  
-  const handleKeyUp = (e: KeyboardEvent) => {
-    if (!manualActive) return;
-    const key = e.key.toLowerCase();
-    keysPressed.current.delete(key);
-  };
-  
-  useEffect(() => {
-    if (manualActive) {
-      window.addEventListener("keydown", handleKeyDown);
-      window.addEventListener("keyup", handleKeyUp);
-      return () => {
-        window.removeEventListener("keydown", handleKeyDown);
-        window.removeEventListener("keyup", handleKeyUp);
-      };
-    }
-  }, [manualActive, linearSpeed, angularSpeed]);
-  
-  useEffect(() => {
-    return () => {
-      if (controlIntervalRef.current) {
-        clearInterval(controlIntervalRef.current);
-      }
-      if (manualActive) {
-        sendControlCommand(0, 0);
-      }
-    };
-  }, []);
-  
+  // Load POIs and position
   useEffect(() => {
     loadAllPOIs();
     loadPosition();
     const interval = setInterval(loadPosition, 3000);
     return () => clearInterval(interval);
   }, [robot.sn]);
-  
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (manualActive) {
+        stopManualControl();
+      }
+    };
+  }, [manualActive]);
+
   const loadAllPOIs = async () => {
     try {
       const poisData = await api.getPOIList();
@@ -149,7 +66,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       toast.error("Failed to load locations");
     }
   };
-  
+
   const loadPosition = async () => {
     try {
       const status = await api.getRobotStatus(robot.sn);
@@ -162,7 +79,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       console.error("Failed to load position:", error);
     }
   };
-  
+
   const handleGoToLocation = async () => {
     if (!selectedPoi) {
       toast.error("Please select a location");
@@ -185,7 +102,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       setLoading(false);
     }
   };
-  
+
   const handleStop = async () => {
     try {
       if (isTemi) {
@@ -198,7 +115,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       toast.error(error.message || "Failed to stop");
     }
   };
-  
+
   const handleSpeak = async () => {
     if (!ttsText || !isTemi) {
       if (!isTemi) toast.error("TTS only for Temi");
@@ -219,60 +136,147 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       setLoading(false);
     }
   };
-  
+
+  // ✅ FIXED MANUAL CONTROL
   const startManualControl = async () => {
     try {
-      // ✅ Enable remote control for Fielder
-      if (!isTemi) {
-        await api.enableRemoteControl();
+      setLoading(true);
+
+      if (isTemi) {
+        // Temi doesn't need special setup
+        setManualActive(true);
+        toast.success("🎮 Manual control active (Temi)");
+      } else {
+        // Fielder: Start control service
+        const started = await manualControl.start();
+        
+        if (started) {
+          setManualActive(true);
+          toast.success("🎮 Manual control active (Fielder)");
+        } else {
+          throw new Error("Failed to start manual control");
+        }
       }
-      
-      setManualActive(true);
+
       keysPressed.current.clear();
-      toast.success("🎮 Manual control active");
-      
-      // ✅ Send commands every 100ms (same as RoboFleet.html)
-      controlIntervalRef.current = setInterval(() => {
-        const { linear, angular } = updateMovement();
-        sendControlCommand(linear, angular);
-      }, 100);
-      
     } catch (error: any) {
-      toast.error("Failed to start control: " + error.message);
+      toast.error(`Failed to start control: ${error.message}`);
+    } finally {
+      setLoading(false);
     }
-  };
-  
-  const stopManualControl = async () => {
-    setManualActive(false);
-    keysPressed.current.clear();
-    setCurrentLinear(0);
-    setCurrentAngular(0);
-    
-    if (controlIntervalRef.current) {
-      clearInterval(controlIntervalRef.current);
-      controlIntervalRef.current = null;
-    }
-    
-    await sendControlCommand(0, 0);
-    toast("Manual control stopped");
   };
 
-  
-  const handleManualMove = (linear: number, angular: number) => {
+  const stopManualControl = async () => {
+    try {
+      setManualActive(false);
+      keysPressed.current.clear();
+      setCurrentLinear(0);
+      setCurrentAngular(0);
+
+      if (isTemi) {
+        await api.controlTemiManual(robot.sn, 0, 0);
+      } else {
+        await manualControl.stop();
+      }
+
+      toast.success("Manual control stopped");
+    } catch (error: any) {
+      console.error("Stop error:", error);
+    }
+  };
+
+  const handleManualMove = async (linear: number, angular: number) => {
+    if (!manualActive) return;
+
     const finalLinear = linear * linearSpeed;
     const finalAngular = angular * angularSpeed;
+    
     setCurrentLinear(finalLinear);
     setCurrentAngular(finalAngular);
-    sendControlCommand(finalLinear, finalAngular);
+
+    try {
+      if (isTemi) {
+        await api.controlTemiManual(robot.sn, finalLinear, finalAngular);
+      } else {
+        // ✅ Use the manual control service
+        manualControl.setVelocities(finalLinear, finalAngular);
+      }
+    } catch (error) {
+      console.error("Control command error:", error);
+    }
   };
-  
-  const handleManualStop = () => {
+
+  const handleManualStop = async () => {
     keysPressed.current.clear();
     setCurrentLinear(0);
     setCurrentAngular(0);
-    sendControlCommand(0, 0);
+
+    try {
+      if (isTemi) {
+        await api.controlTemiManual(robot.sn, 0, 0);
+      } else {
+        manualControl.setVelocities(0, 0);
+      }
+    } catch (error) {
+      console.error("Stop command error:", error);
+    }
   };
-  // Save current position as POI
+
+  // Keyboard controls
+  const updateMovementFromKeys = () => {
+    let linear = 0;
+    let angular = 0;
+
+    if (keysPressed.current.has("w") || keysPressed.current.has("arrowup")) {
+      linear += 1;
+    }
+    if (keysPressed.current.has("s") || keysPressed.current.has("arrowdown")) {
+      linear -= 1;
+    }
+    if (keysPressed.current.has("a") || keysPressed.current.has("arrowleft")) {
+      angular += 1;
+    }
+    if (keysPressed.current.has("d") || keysPressed.current.has("arrowright")) {
+      angular -= 1;
+    }
+
+    handleManualMove(linear, angular);
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (!manualActive) return;
+    
+    const key = e.key.toLowerCase();
+    if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) {
+      e.preventDefault();
+      keysPressed.current.add(key);
+      updateMovementFromKeys();
+    }
+    if (e.key === " ") {
+      e.preventDefault();
+      handleManualStop();
+    }
+  };
+
+  const handleKeyUp = (e: KeyboardEvent) => {
+    if (!manualActive) return;
+    
+    const key = e.key.toLowerCase();
+    keysPressed.current.delete(key);
+    updateMovementFromKeys();
+  };
+
+  useEffect(() => {
+    if (manualActive) {
+      window.addEventListener("keydown", handleKeyDown);
+      window.addEventListener("keyup", handleKeyUp);
+      return () => {
+        window.removeEventListener("keydown", handleKeyDown);
+        window.removeEventListener("keyup", handleKeyUp);
+      };
+    }
+  }, [manualActive, linearSpeed, angularSpeed]);
+
   const handleSaveAsPOI = async () => {
     if (!position) {
       toast.error("No position data");
@@ -296,7 +300,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       setLoading(false);
     }
   };
-  // ✅ FIX: Move to charge with correct locations
+
   const handleMoveToCharge = async () => {
     try {
       setLoading(true);
@@ -312,7 +316,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
       setLoading(false);
     }
   };
-  
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
@@ -333,7 +337,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
             </button>
           </div>
         </div>
-        
+
         {/* Robot Info */}
         <div className="p-6 bg-gray-50 border-b border-gray-100">
           <div className="grid grid-cols-3 gap-4 text-sm">
@@ -351,7 +355,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
             </div>
           </div>
         </div>
-        
+
         {/* Position Display */}
         {position && (
           <div className="p-6 bg-blue-50 border-b border-blue-100">
@@ -372,22 +376,10 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                   {position.y?.toFixed(3)} m
                 </div>
               </div>
-              <div>
-                <div className="text-xs text-blue-700">Orientation</div>
-                <div className="font-mono text-lg font-bold text-blue-900">
-                  {(position.yaw || position.ori || 0)?.toFixed(3)} rad
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-blue-700">Distance from Origin</div>
-                <div className="font-mono text-lg font-bold text-blue-900">
-                  {Math.sqrt((position.x || 0) ** 2 + (position.y || 0) ** 2).toFixed(2)} m
-                </div>
-              </div>
             </div>
           </div>
         )}
-        
+
         {/* Control Tabs */}
         <div className="flex border-b border-gray-200">
           <button
@@ -423,7 +415,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
             </button>
           )}
         </div>
-        
+
         {/* Tab Content */}
         <div className="p-6">
           {activeTab === "navigation" && (
@@ -444,13 +436,8 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                     </option>
                   ))}
                 </select>
-                {allPOIs.length === 0 && (
-                  <p className="text-xs text-orange-600 mt-1">
-                    No saved locations. Save current position to create one.
-                  </p>
-                )}
               </div>
-              
+
               {isTemi && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -467,12 +454,12 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                   />
                 </div>
               )}
-              
+
               <div className="flex gap-2">
                 <button
                   onClick={handleGoToLocation}
                   disabled={loading || !selectedPoi}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
                   {loading ? "Moving..." : "▶️ Go"}
                 </button>
@@ -483,8 +470,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                   ⏹️ Stop
                 </button>
               </div>
-              
-              {/* Charge Button */}
+
               <button
                 onClick={handleMoveToCharge}
                 disabled={loading}
@@ -494,7 +480,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
               </button>
             </div>
           )}
-          
+
           {activeTab === "manual" && (
             <div className="space-y-4">
               {/* Status Indicator */}
@@ -520,30 +506,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                   }
                 </div>
               </div>
-              
-              {!isTemi && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <p className="text-sm text-yellow-800">
-                    ⚠️ <strong>Fielder/AMR:</strong> Enable remote control mode before manual operation
-                  </p>
-                  <button
-                    onClick={async () => {
-                      try {
-                        await fetch('http://192.168.0.183:8000/api/v1/robot/control/enable_remote', {
-                          method: 'POST'
-                        });
-                        toast.success("Remote control enabled");
-                      } catch (err) {
-                        toast.error("Failed to enable remote control");
-                      }
-                    }}
-                    className="mt-2 w-full px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
-                  >
-                    Enable Remote Control
-                  </button>
-                </div>
-              )}
-              
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -574,7 +537,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                   />
                 </div>
               </div>
-              
+
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-2">Current Command:</div>
                 <div className="font-mono text-sm">
@@ -582,78 +545,79 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
                   Angular: {currentAngular.toFixed(2)} rad/s
                 </div>
               </div>
-              
+
               {/* Virtual D-Pad */}
               <div className="grid grid-cols-3 gap-2">
                 <div></div>
                 <button
-                  onMouseDown={() => handleManualMove(0.5, 0)}
+                  onMouseDown={() => handleManualMove(1, 0)}
                   onMouseUp={handleManualStop}
-                  onTouchStart={() => handleManualMove(0.5, 0)}
+                  onTouchStart={() => handleManualMove(1, 0)}
                   onTouchEnd={handleManualStop}
                   disabled={!manualActive}
-                  className="p-4 bg-green-600 text-white rounded-lg hover:bg-green-700 active:bg-green-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="p-4 bg-green-600 text-white rounded-lg hover:bg-green-700 active:bg-green-800 disabled:opacity-50"
                 >
                   ⬆️ Forward
                 </button>
                 <div></div>
                 
                 <button
-                  onMouseDown={() => handleManualMove(0, 0.5)}
+                  onMouseDown={() => handleManualMove(0, 1)}
                   onMouseUp={handleManualStop}
-                  onTouchStart={() => handleManualMove(0, 0.5)}
+                  onTouchStart={() => handleManualMove(0, 1)}
                   onTouchEnd={handleManualStop}
                   disabled={!manualActive}
-                  className="p-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="p-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50"
                 >
                   ⬅️ Left
                 </button>
                 <button
                   onClick={handleManualStop}
                   disabled={!manualActive}
-                  className="p-4 bg-red-600 text-white rounded-lg hover:bg-red-700 text-xl font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="p-4 bg-red-600 text-white rounded-lg hover:bg-red-700 text-xl font-bold disabled:opacity-50"
                 >
                   ⏹️ STOP
                 </button>
                 <button
-                  onMouseDown={() => handleManualMove(0, -0.5)}
+                  onMouseDown={() => handleManualMove(0, -1)}
                   onMouseUp={handleManualStop}
-                  onTouchStart={() => handleManualMove(0, -0.5)}
+                  onTouchStart={() => handleManualMove(0, -1)}
                   onTouchEnd={handleManualStop}
                   disabled={!manualActive}
-                  className="p-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="p-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50"
                 >
                   ➡️ Right
                 </button>
                 
                 <div></div>
                 <button
-                  onMouseDown={() => handleManualMove(-0.5, 0)}
+                  onMouseDown={() => handleManualMove(-1, 0)}
                   onMouseUp={handleManualStop}
-                  onTouchStart={() => handleManualMove(-0.5, 0)}
+                  onTouchStart={() => handleManualMove(-1, 0)}
                   onTouchEnd={handleManualStop}
                   disabled={!manualActive}
-                  className="p-4 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 active:bg-yellow-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="p-4 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 active:bg-yellow-800 disabled:opacity-50"
                 >
                   ⬇️ Backward
                 </button>
                 <div></div>
               </div>
-              
+
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <p className="text-sm text-blue-800">
                   <strong>⌨️ Keyboard Controls:</strong><br />
                   W/↑ - Forward | S/↓ - Backward | A/← - Left | D/→ - Right | SPACE - Emergency Stop
                 </p>
               </div>
-              
+
               <div className="flex gap-2">
                 {!manualActive ? (
                   <button
                     onClick={startManualControl}
-                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    disabled={loading}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   >
-                    ▶️ Start Control
+                    {loading ? "Starting..." : "▶️ Start Control"}
                   </button>
                 ) : (
                   <button
@@ -666,7 +630,7 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
               </div>
             </div>
           )}
-          
+
           {activeTab === "tts" && isTemi && (
             <div className="space-y-4">
               <div>
@@ -684,14 +648,14 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
               <button
                 onClick={handleSpeak}
                 disabled={loading || !ttsText}
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
                 {loading ? "Speaking..." : "🔊 Speak"}
               </button>
             </div>
           )}
         </div>
-        
+
         {/* Quick Actions */}
         <div className="p-6 border-t border-gray-100 bg-gray-50">
           <h3 className="text-sm font-semibold text-gray-900 mb-3">⚙️ Quick Actions</h3>
