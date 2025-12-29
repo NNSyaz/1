@@ -1,6 +1,6 @@
 // src/components/modals/RobotControlModal_FIXED.tsx
 import React, { useState, useEffect, useRef } from "react";
-import { X, MapPin, RefreshCw, Save } from "lucide-react";
+import { X, MapPin, RefreshCw, Save, AlertTriangle } from "lucide-react";
 import api from "../../services/api";
 import toast from "react-hot-toast";
 import { manualControl } from "../../services/manualControl";
@@ -483,7 +483,19 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
 
           {activeTab === "manual" && (
             <div className="space-y-4">
-              {/* Status Indicator */}
+              {/* ✅ UPDATED: Show remote mode requirement for Fielder */}
+              {!isTemi && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 text-yellow-800 mb-2">
+                    <AlertTriangle className="w-5 h-5" />
+                    <span className="font-semibold">Remote Control Mode Required</span>
+                  </div>
+                  <p className="text-sm text-yellow-700">
+                    The robot must be in <strong>remote control mode</strong> to accept manual commands. 
+                    Clicking "Start Control" will automatically enable remote mode.
+                  </p>
+                </div>
+              )}
               <div className={`p-4 rounded-lg border-2 ${
                 manualActive 
                   ? "bg-green-50 border-green-500" 
