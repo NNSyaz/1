@@ -529,6 +529,78 @@ export const getRobotIP = async (sn: string): Promise<string> => {
 };
 
 // ============================================================================
+// FIELDER WAYPOINT SYNC APIs - ✅ NEW
+// ============================================================================
+
+/**
+ * ✅ Sync waypoints from Fielder robot map to MongoDB
+ * This fetches waypoints/overlays from the Fielder robot's active map
+ * and stores them in the MongoDB POI collection
+ * 
+ * @param robotIp Fielder robot IP address (default: 192.168.0.250)
+ * @returns Sync result with waypoint count and details
+ */
+export const syncFielderWaypoints = async (robotIp: string = "192.168.0.250") => {
+  try {
+    const response = await api.post(`/api/v1/fielder/sync_waypoints?robot_ip=${robotIp}`);
+    return response.data;
+  } catch (error: any) {
+    console.error("Fielder sync error:", error);
+    throw error;
+  }
+};
+
+/**
+ * ✅ Get waypoints from Fielder robot (without syncing to DB)
+ * Use this to preview waypoints before syncing
+ * 
+ * @param robotIp Fielder robot IP address
+ * @returns List of waypoints from robot
+ */
+export const getFielderWaypoints = async (robotIp: string = "192.168.0.250") => {
+  try {
+    const response = await api.get(`/api/v1/fielder/waypoints?robot_ip=${robotIp}`);
+    return response.data;
+  } catch (error: any) {
+    console.error("Failed to get Fielder waypoints:", error);
+    throw error;
+  }
+};
+
+/**
+ * ✅ Get list of maps from Fielder robot
+ * 
+ * @param robotIp Fielder robot IP address
+ * @returns List of maps
+ */
+export const getFielderMapsList = async (robotIp: string = "192.168.0.250") => {
+  try {
+    const response = await api.get(`/api/v1/fielder/maps?robot_ip=${robotIp}`);
+    return response.data;
+  } catch (error: any) {
+    console.error("Failed to get Fielder maps:", error);
+    throw error;
+  }
+};
+
+/**
+ * ✅ Get overlays for a specific Fielder map
+ * 
+ * @param mapId Map ID
+ * @param robotIp Fielder robot IP address
+ * @returns List of overlays (waypoints, walls, etc.)
+ */
+export const getFielderMapOverlays = async (mapId: number, robotIp: string = "192.168.0.250") => {
+  try {
+    const response = await api.get(`/api/v1/fielder/overlays/${mapId}?robot_ip=${robotIp}`);
+    return response.data;
+  } catch (error: any) {
+    console.error("Failed to get map overlays:", error);
+    throw error;
+  }
+};
+
+// ============================================================================
 // EXPORT DEFAULT API OBJECT
 // ============================================================================
 
@@ -591,4 +663,10 @@ export default {
   downloadFielderMapImage,
   getFielderActiveMap,
   getRobotIP,
+
+  // ✅ Fielder Waypoint Sync (NEW)
+  syncFielderWaypoints,
+  getFielderWaypoints,
+  getFielderMapsList,
+  getFielderMapOverlays,
 };

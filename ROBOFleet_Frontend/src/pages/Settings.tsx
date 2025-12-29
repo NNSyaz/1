@@ -3,6 +3,7 @@ import React, { useState, useEffect } from "react";
 import { Save, CheckCircle, AlertTriangle, Settings as SettingsIcon } from "lucide-react";
 import api from "../services/api";
 import toast from "react-hot-toast";
+import FielderSyncPanel from "../components/FielderSyncPanel";
 
 const Settings: React.FC = () => {
   const [apiUrl, setApiUrl] = useState(
@@ -234,6 +235,7 @@ const Settings: React.FC = () => {
           <div className="flex justify-between items-center py-3">
             <span className="text-sm text-gray-600">Active Sessions</span>
             <span className="text-sm font-medium text-gray-900">1</span>
+            <FielderSyncPanel />
           </div>
         </div>
       </div>
