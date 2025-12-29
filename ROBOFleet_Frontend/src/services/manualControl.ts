@@ -1,9 +1,11 @@
-// src/services/manualControl.ts - FIXED VERSION
+// src/services/manualControl.ts
 /**
- * ✅ FIXED: Matches working HTML implementation
+ * ✅ CORRECT: Manual Control Service for Fielder/AMR Robots
+ * Uses flat linear_velocity and angular_velocity fields (NOT nested objects!)
  */
 
 const ROBOT_WS_URL = "ws://192.168.0.250:8090/ws/v2/topics";
+const BACKEND_API_URL = "http://192.168.0.183:8000";
 
 class ManualControlService {
   private ws: WebSocket | null = null;
@@ -11,128 +13,231 @@ class ManualControlService {
   private commandInterval: ReturnType<typeof setInterval> | null = null;
   private currentLinear = 0;
   private currentAngular = 0;
-  private commandDelay = 200; // ✅ Increased from 100ms to match HTML
-  private topicAdvertised = false;
-  private readyForControl = false; // ✅ NEW: Wait for readiness
+  private readyForControl = false;
+  
+  // ✅ CRITICAL: Send commands continuously at 5Hz (200ms)
+  private readonly COMMAND_INTERVAL_MS = 200;
 
   async start(): Promise<boolean> {
     if (this.isActive) {
-      console.log("Manual control already active");
+      console.log("✅ Manual control already active");
       return true;
     }
 
     try {
-      // ✅ CRITICAL: Enable remote control mode FIRST
-      console.log("🔧 Enabling remote control mode...");
+      // ✅ STEP 1: Enable remote control mode on robot
+      console.log("🔧 Step 1/4: Enabling remote control mode...");
       await this.enableRemoteMode();
       
-      console.log("🎮 Connecting to robot WebSocket...");
-      this.ws = new WebSocket(ROBOT_WS_URL);
+      // ✅ STEP 2: Connect to robot WebSocket
+      console.log("🔌 Step 2/4: Connecting to robot WebSocket...");
+      const connected = await this.connectWebSocket();
       
-      return new Promise((resolve, reject) => {
-        if (!this.ws) {
-          reject(new Error("Failed to create WebSocket"));
-          return;
-        }
-
-        this.ws.onopen = () => {
-          console.log("✅ WebSocket connected");
-          
-          // ✅ CRITICAL: Advertise topic immediately on connect
-          this.advertiseTopic();
-          
-          // ✅ Wait for topic to be ready before marking as active
-          setTimeout(() => {
-            this.readyForControl = true;
-            console.log("✅ Ready for control!");
-            console.log("🎯 Press W/A/S/D or arrow keys to move");
-            this.isActive = true;
-            resolve(true);
-          }, 1000); // Give robot time to register topic
-        };
-
-        this.ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            console.log("📨 Robot:", data);
-          } catch (e) {
-            console.log("📨 Robot (raw):", event.data);
-          }
-        };
-
-        this.ws.onerror = (error) => {
-          console.error("❌ WebSocket error:", error);
-          this.isActive = false;
-          reject(new Error("WebSocket connection failed"));
-        };
-
-        this.ws.onclose = () => {
-          console.log("WebSocket closed");
-          this.cleanup();
-        };
-
-        setTimeout(() => {
-          if (!this.isActive) {
-            this.cleanup();
-            reject(new Error("WebSocket timeout"));
-          }
-        }, 5000);
-      });
+      if (!connected) {
+        throw new Error("Failed to connect to robot");
+      }
+      
+      // ✅ STEP 3: Enable twist feedback topic (like HTML does)
+      console.log("📡 Step 3/4: Enabling /twist_feedback topic...");
+      this.enableTwistFeedback();
+      
+      // ✅ STEP 4: Start continuous command sending
+      console.log("🎮 Step 4/4: Starting command loop...");
+      this.startCommandLoop();
+      
+      this.isActive = true;
+      this.readyForControl = true;
+      
+      console.log("✅ Manual control ready!");
+      console.log("🎯 Use keyboard (WASD/Arrows) or virtual joystick to move");
+      
+      return true;
     } catch (error) {
-      console.error("❌ Start error:", error);
+      console.error("❌ Failed to start manual control:", error);
       this.cleanup();
       throw error;
     }
   }
 
-  private advertiseTopic(): void {
+  private async enableRemoteMode(): Promise<void> {
+    try {
+      const response = await fetch(`${BACKEND_API_URL}/api/v1/robot/control/enable_remote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: Failed to enable remote mode`);
+      }
+
+      const data = await response.json();
+      
+      if (!data.ready && data.status !== 200) {
+        throw new Error(data.msg || "Robot not ready for remote control");
+      }
+
+      console.log("✅ Remote control mode enabled");
+      
+      // ✅ CRITICAL: Wait for robot to switch modes
+      await this.delay(1000);
+    } catch (error) {
+      console.error("❌ Enable remote mode error:", error);
+      throw error;
+    }
+  }
+
+  private connectWebSocket(): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      try {
+        this.ws = new WebSocket(ROBOT_WS_URL);
+        
+        const timeout = setTimeout(() => {
+          this.cleanup();
+          reject(new Error("WebSocket connection timeout"));
+        }, 5000);
+
+        this.ws.onopen = () => {
+          clearTimeout(timeout);
+          console.log("✅ WebSocket connected");
+          
+          // Ready after a short delay
+          setTimeout(() => {
+            console.log("✅ Ready for control");
+            resolve(true);
+          }, 500);
+        };
+
+        this.ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            // Robot sends feedback on various topics
+            if (data.topic === "/twist_feedback") {
+              // Robot acknowledges command received
+              console.log("🤖 Twist command acknowledged");
+            } else if (data.topic) {
+              console.log("📨 Robot feedback:", data.topic);
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        };
+
+        this.ws.onerror = (error) => {
+          clearTimeout(timeout);
+          console.error("❌ WebSocket error:", error);
+          reject(error);
+        };
+
+        this.ws.onclose = (event) => {
+          console.log(`🔌 WebSocket closed: ${event.code} - ${event.reason}`);
+          this.cleanup();
+        };
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  private enableTwistFeedback(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn("⚠️ Cannot advertise - WebSocket not open");
+      console.warn("⚠️ Cannot enable feedback - WebSocket not ready");
       return;
     }
 
-    const advertiseMsg = {
-      op: "advertise",
-      topic: "/twist",
-      type: "geometry_msgs/Twist"
+    // ✅ CRITICAL: Enable /twist_feedback topic (matching HTML)
+    const enableMsg = {
+      enable_topic: ["/twist_feedback"]
     };
 
-    console.log("📢 Advertising /twist topic:", advertiseMsg);
-    this.ws.send(JSON.stringify(advertiseMsg));
-    this.topicAdvertised = true;
+    console.log("📢 Enabling twist feedback topic");
+    this.ws.send(JSON.stringify(enableMsg));
+  }
+
+  private startCommandLoop(): void {
+    // ✅ CRITICAL: Send commands continuously at 5Hz (200ms interval)
+    // This is REQUIRED for Fielder robots - they expect continuous commands
+    this.commandInterval = setInterval(() => {
+      if (this.readyForControl) {
+        this.sendCommand(this.currentLinear, this.currentAngular);
+      }
+    }, this.COMMAND_INTERVAL_MS);
+
+    console.log(`🔄 Command loop started (${this.COMMAND_INTERVAL_MS}ms interval)`);
+  }
+
+  private sendCommand(linear: number, angular: number): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn("⚠️ WebSocket not open, cannot send command");
+      return false;
+    }
+
+    if (!this.readyForControl) {
+      return false;
+    }
+
+    try {
+      // ✅ CRITICAL FIX: Robot expects FLAT fields, not nested objects!
+      // HTML working format: {"topic":"/twist","linear_velocity":0.25,"angular_velocity":0}
+      const message = {
+        topic: "/twist",
+        linear_velocity: linear,
+        angular_velocity: angular
+      };
+
+      this.ws.send(JSON.stringify(message));
+      
+      // Only log when velocities change (avoid spam)
+      if (linear !== 0 || angular !== 0) {
+        console.log(`📤 CMD: linear=${linear.toFixed(2)}, angular=${angular.toFixed(2)}`);
+      }
+      
+      return true;
+    } catch (error) {
+      console.error("❌ Send command error:", error);
+      return false;
+    }
+  }
+
+  setVelocities(linear: number, angular: number): void {
+    // ✅ Store velocities - they will be sent by the command loop
+    const changed = (linear !== this.currentLinear || angular !== this.currentAngular);
+    
+    this.currentLinear = linear;
+    this.currentAngular = angular;
+    
+    if (changed && (linear !== 0 || angular !== 0)) {
+      console.log(`🎮 Velocities updated: linear=${linear.toFixed(2)}, angular=${angular.toFixed(2)}`);
+    }
   }
 
   async stop(): Promise<void> {
     console.log("🛑 Stopping manual control...");
     
-    // Send stop command first
-    await this.sendCommand(0, 0);
+    // ✅ STEP 1: Send stop command (zero velocities)
+    this.currentLinear = 0;
+    this.currentAngular = 0;
     
+    // Send stop command multiple times to ensure it's received
+    for (let i = 0; i < 5; i++) {
+      await this.sendCommand(0, 0);
+      await this.delay(50);
+    }
+    
+    // ✅ STEP 2: Stop command loop
     this.cleanup();
     
-    // Unadvertise topic
-    if (this.topicAdvertised && this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const unadvertiseMsg = {
-        op: "unadvertise",
-        topic: "/twist"
-      };
-      console.log("📢 Unadvertising /twist");
-      this.ws.send(JSON.stringify(unadvertiseMsg));
-    }
-
-    // Close WebSocket
+    // ✅ STEP 3: Close WebSocket
     if (this.ws) {
-      this.ws.close();
+      this.ws.close(1000, "Manual control stopped");
       this.ws = null;
     }
-
+    
     console.log("✅ Manual control stopped");
   }
 
   private cleanup(): void {
     this.isActive = false;
     this.readyForControl = false;
-    this.topicAdvertised = false;
     
     if (this.commandInterval) {
       clearInterval(this.commandInterval);
@@ -143,72 +248,16 @@ class ManualControlService {
     this.currentAngular = 0;
   }
 
-  setVelocities(linear: number, angular: number): void {
-    const changed = (linear !== this.currentLinear || angular !== this.currentAngular);
-    
-    this.currentLinear = linear;
-    this.currentAngular = angular;
-    
-    if (changed) {
-      console.log(`🎮 NEW velocities: linear=${linear.toFixed(2)}, angular=${angular.toFixed(2)}`);
-      console.log(`   isActive=${this.isActive}, topicAdvertised=${this.topicAdvertised}, wsState=${this.ws?.readyState}`);
-      
-      // ✅ Send immediately when velocities change
-      if (this.readyForControl) {
-        this.sendCommand(linear, angular);
-      }
-    }
-  }
-
-  async sendCommand(linear: number, angular: number): Promise<boolean> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn("⚠️ WebSocket not open, state:", this.ws?.readyState);
-      return false;
-    }
-
-    if (!this.topicAdvertised) {
-      console.warn("⚠️ Topic not advertised yet");
-      return false;
-    }
-
-    if (!this.readyForControl) {
-      console.warn("⚠️ Not ready for control yet");
-      return false;
-    }
-
-    try {
-      // ✅ CRITICAL: Match the exact message format from working HTML
-      const message = {
-        op: "publish",
-        topic: "/twist",
-        msg: {
-          linear: {
-            x: linear,
-            y: 0,
-            z: 0
-          },
-          angular: {
-            x: 0,
-            y: 0,
-            z: angular
-          }
-        }
-      };
-
-      console.log(`📤 SENDING: linear=${linear.toFixed(2)}, angular=${angular.toFixed(2)}`);
-      this.ws.send(JSON.stringify(message));
-      return true;
-    } catch (error) {
-      console.error("❌ Send error:", error);
-      return false;
-    }
-  }
-
   async emergencyStop(): Promise<void> {
-    console.log("🛑 EMERGENCY STOP!");
+    console.log("🚨 EMERGENCY STOP!");
     this.currentLinear = 0;
     this.currentAngular = 0;
-    await this.sendCommand(0, 0);
+    
+    // Send stop command immediately (don't wait for command loop)
+    for (let i = 0; i < 5; i++) {
+      await this.sendCommand(0, 0);
+      await this.delay(50);
+    }
   }
 
   isControlActive(): boolean {
@@ -222,37 +271,10 @@ class ManualControlService {
     };
   }
 
-  private async enableRemoteMode(): Promise<void> {
-    try {
-      // ✅ CRITICAL: Use backend endpoint to enable remote mode (avoids CORS)
-      const response = await fetch("http://192.168.0.183:8000/api/v1/robot/control/enable_remote", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        }
-      });
-
-      if (!response.ok) {
-        console.warn("⚠️ Failed to enable remote mode:", response.status);
-        throw new Error("Failed to enable remote mode");
-      }
-
-      const data = await response.json();
-      
-      if (data.ready) {
-        console.log("✅ Remote control mode enabled");
-      } else {
-        console.warn("⚠️ Remote mode response:", data);
-        throw new Error(data.msg || "Failed to enable remote mode");
-      }
-      
-      // Wait a bit for robot to switch modes
-      await new Promise(resolve => setTimeout(resolve, 500));
-    } catch (error) {
-      console.error("❌ Enable remote mode error:", error);
-      throw error;
-    }
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 
+// Export singleton instance
 export const manualControl = new ManualControlService();

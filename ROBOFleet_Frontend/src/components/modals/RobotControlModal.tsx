@@ -185,26 +185,28 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     }
   };
 
-  const handleManualMove = async (linear: number, angular: number) => {
-    if (!manualActive) return;
+// ✅ CRITICAL: Continuous command sending for Fielder
+const handleManualMove = async (linear: number, angular: number) => {
+  if (!manualActive) return;
 
-    const finalLinear = linear * linearSpeed;
-    const finalAngular = angular * angularSpeed;
-    
-    setCurrentLinear(finalLinear);
-    setCurrentAngular(finalAngular);
+  const finalLinear = linear * linearSpeed;
+  const finalAngular = angular * angularSpeed;
+  
+  setCurrentLinear(finalLinear);
+  setCurrentAngular(finalAngular);
 
-    try {
-      if (isTemi) {
-        await api.controlTemiManual(robot.sn, finalLinear, finalAngular);
-      } else {
-        // ✅ Use the manual control service
-        manualControl.setVelocities(finalLinear, finalAngular);
-      }
-    } catch (error) {
-      console.error("Control command error:", error);
+  try {
+    if (isTemi) {
+      await api.controlTemiManual(robot.sn, finalLinear, finalAngular);
+    } else {
+      // ✅ For Fielder: Just update velocities
+      // The service will send commands continuously
+      manualControl.setVelocities(finalLinear, finalAngular);
     }
-  };
+  } catch (error) {
+    console.error("Control command error:", error);
+  }
+};
 
   const handleManualStop = async () => {
     keysPressed.current.clear();
@@ -222,27 +224,25 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
     }
   };
 
-  // Keyboard controls
   const updateMovementFromKeys = () => {
-    let linear = 0;
-    let angular = 0;
+  let linear = 0;
+  let angular = 0;
 
-    if (keysPressed.current.has("w") || keysPressed.current.has("arrowup")) {
-      linear += 1;
-    }
-    if (keysPressed.current.has("s") || keysPressed.current.has("arrowdown")) {
-      linear -= 1;
-    }
-    if (keysPressed.current.has("a") || keysPressed.current.has("arrowleft")) {
-      angular += 1;
-    }
-    if (keysPressed.current.has("d") || keysPressed.current.has("arrowright")) {
-      angular -= 1;
-    }
+  if (keysPressed.current.has("w") || keysPressed.current.has("arrowup")) {
+    linear += 1;
+  }
+  if (keysPressed.current.has("s") || keysPressed.current.has("arrowdown")) {
+    linear -= 1;
+  }
+  if (keysPressed.current.has("a") || keysPressed.current.has("arrowleft")) {
+    angular += 1;
+  }
+  if (keysPressed.current.has("d") || keysPressed.current.has("arrowright")) {
+    angular -= 1;
+  }
 
-    handleManualMove(linear, angular);
-  };
-
+  handleManualMove(linear, angular);
+};
   const handleKeyDown = (e: KeyboardEvent) => {
     if (!manualActive) return;
     
