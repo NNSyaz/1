@@ -4,9 +4,8 @@
  * Add this to your Settings page or as a separate page
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { 
-  RefreshCw, 
   Download, 
   CheckCircle, 
   AlertCircle, 

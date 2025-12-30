@@ -750,28 +750,6 @@ const RobotControlModal: React.FC<RobotControlModalProps> = ({
             </div>
           )}
         </div>
-
-        {/* Quick Actions */}
-        <div className="p-6 border-t border-gray-100 bg-gray-50">
-          <h3 className="text-sm font-semibold text-gray-900 mb-3">⚙️ Quick Actions</h3>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={handleSaveAsPOI}
-              disabled={loading || !position}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-            >
-              <Save className="w-4 h-4" />
-              Save as POI
-            </button>
-            <button
-              onClick={loadPosition}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Refresh Location
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

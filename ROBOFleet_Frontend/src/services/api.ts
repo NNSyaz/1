@@ -79,8 +79,8 @@ export const getPOIList = async () => {
 
 export const setPOI = async (
   poiName: string, 
-  sn?: string, 
-  position?: { x: number; y: number; yaw?: number; ori?: number }
+  _sn?: string, 
+  _position?: { x: number; y: number; yaw?: number; ori?: number }
 ) => {
   const params = new URLSearchParams({ name: poiName });
   const response = await api.get("/api/v1/robot/set/poi", { params });
@@ -363,7 +363,7 @@ export const enableRemoteControl = async () => {
   }
 };
 
-export const fielderGoTo = async (sn: string, location: string) => {
+export const fielderGoTo = async (_sn: string, location: string) => {
   try {
     const response = await api.post("/api/v1/robot/control/goto", {
       location: location
@@ -423,7 +423,7 @@ export const moveToCoordinate = async (
   x: number,
   y: number,
   ori: number = 0,
-  sn?: string
+  _sn?: string
 ) => {
   try {
     const response = await api.post("/api/v1/robot/control/move_coordinate", {

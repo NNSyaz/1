@@ -11,7 +11,6 @@ import {
   AlertCircle,
   MapPin,
   Trash2,
-  Edit3,
   ArrowLeft,
   Gamepad2,
 } from "lucide-react";

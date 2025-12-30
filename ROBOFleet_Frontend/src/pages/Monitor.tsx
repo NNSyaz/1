@@ -1,4 +1,4 @@
-// src/pages/Monitor.tsx - FIXED WITH ACTUAL COORDINATES
+// src/pages/Monitor.tsx - SEPARATE STATIC MAPS (SIMPLIFIED)
 import React, { useEffect, useState, useRef } from "react";
 import {
   Battery,
@@ -13,12 +13,9 @@ import {
   Activity,
   Zap,
   Radio,
-  Upload,
   ZoomIn,
   ZoomOut,
   Maximize2,
-  Download,
-  X,
 } from "lucide-react";
 import api from "../services/api";
 import { robotStatusService } from "../services/robotStatusService";
@@ -30,12 +27,12 @@ interface Robot {
   status: "online" | "offline" | "idle" | "charging";
   battery: number;
   lastSeen: string;
-  position: { x: number; y: number };
   signal?: number;
   task?: string;
   sn?: string;
   model?: string;
-  // ✅ NEW: Actual coordinates from API
+  ip?: string;
+  // Actual coordinates from API (in meters)
   actualPosition?: { x: number; y: number; yaw: number };
 }
 
@@ -115,16 +112,12 @@ const Monitor: React.FC = () => {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   
   // Map state
-  const [mapImage, setMapImage] = useState<string | null>(
-    localStorage.getItem("fleet_map_image")
-  );
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   /* ---------------- Data fetching ------------------------------------- */
   const fetchRobots = async () => {
@@ -146,17 +139,10 @@ const Monitor: React.FC = () => {
             const status = await api.getRobotStatus(r.data.sn);
             const isOnline = status?.robotStatus?.state >= 2;
 
-            // ✅ GET ACTUAL POSITION FROM API
+            // Get actual position from API
             const actualPosition = status?.position || status?.robotStatus?.position || { x: 0, y: 0, yaw: 0 };
             
-            console.log(`📍 Robot ${r.nickname} actual position:`, actualPosition);
-            
-            // Convert to map coordinates (0-100 range for percentage positioning)
-            const mapX = actualPosition.x !== 0 ? 50 + (actualPosition.x * 5) : 50;
-            const mapY = actualPosition.y !== 0 ? 50 - (actualPosition.y * 5) : 50;
-            
-            const boundedX = Math.max(5, Math.min(95, mapX));
-            const boundedY = Math.max(5, Math.min(95, mapY));
+            console.log(`📍 Robot ${r.nickname} position:`, actualPosition);
 
             return {
               id: r.data.sn,
@@ -164,11 +150,6 @@ const Monitor: React.FC = () => {
               status: isOnline ? ("online" as const) : ("offline" as const),
               battery: status?.robotStatus?.power ?? 0,
               lastSeen: new Date().toISOString(),
-              position: {
-                x: boundedX,
-                y: boundedY,
-              },
-              // ✅ STORE ACTUAL POSITION
               actualPosition: {
                 x: actualPosition.x || 0,
                 y: actualPosition.y || 0,
@@ -178,6 +159,7 @@ const Monitor: React.FC = () => {
               task: isOnline ? "Idle" : "Offline",
               sn: r.data.sn,
               model: r.data?.model || r.model || "AMR",
+              ip: r.data.ip,
             };
           } catch (e) {
             console.error(`Failed to get status for ${r.data.sn}:`, e);
@@ -187,12 +169,12 @@ const Monitor: React.FC = () => {
               status: "offline" as const,
               battery: 0,
               lastSeen: new Date().toISOString(),
-              position: { x: 50, y: 50 },
               actualPosition: { x: 0, y: 0, yaw: 0 },
               signal: 0,
               task: "Offline",
               sn: r.data.sn,
               model: r.data?.model || r.model || "AMR",
+              ip: r.data.ip,
             };
           }
         })
@@ -201,6 +183,7 @@ const Monitor: React.FC = () => {
       setRobots(robotsWithStatus);
       setLastUpdate(new Date());
 
+      // Auto-select first robot if none selected
       if (!selectedRobot && robotsWithStatus.length > 0) {
         setSelectedRobot(robotsWithStatus[0]);
       }
@@ -277,6 +260,15 @@ const Monitor: React.FC = () => {
     };
   }, [selectedRobot?.id]);
 
+  /* ---------------- Robot Selection ----------------------------------- */
+  const handleRobotSelect = (robot: Robot) => {
+    setSelectedRobot(robot);
+    
+    // Reset zoom and pan
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
   /* ---------------- Map Controls -------------------------------------- */
   const handleZoomIn = () => {
     setZoom((prev) => Math.min(prev + 0.2, 3));
@@ -313,32 +305,6 @@ const Monitor: React.FC = () => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? -0.1 : 0.1;
     setZoom((prev) => Math.max(0.5, Math.min(3, prev + delta)));
-  };
-
-  /* ---------------- Map Image Upload ---------------------------------- */
-  const handleMapImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const imageData = event.target?.result as string;
-      setMapImage(imageData);
-      localStorage.setItem("fleet_map_image", imageData);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleDownloadMapFromRobot = async () => {
-    // Note: This feature requires getRobotIP and getFielderMaps API methods
-    // which are not currently implemented in the API service.
-    // For now, users can upload maps manually using the upload button.
-    alert("⚠️ Map download from robot is not yet implemented. Please use the upload button to add a map image manually.");
-  };
-
-  const handleRemoveMapImage = () => {
-    setMapImage(null);
-    localStorage.removeItem("fleet_map_image");
   };
 
   /* ---------------- Derived state ------------------------------------- */
@@ -497,7 +463,7 @@ const Monitor: React.FC = () => {
                   robots.map((robot) => (
                     <div
                       key={robot.id}
-                      onClick={() => setSelectedRobot(robot)}
+                      onClick={() => handleRobotSelect(robot)}
                       className={`p-4 cursor-pointer transition-all hover:bg-gray-50 ${
                         selectedRobot?.id === robot.id
                           ? "bg-blue-50 border-l-4 border-blue-600"
@@ -527,7 +493,6 @@ const Monitor: React.FC = () => {
                             <span>•</span>
                             <span>{robot.task || "Idle"}</span>
                           </div>
-                          {/* ✅ DISPLAY ACTUAL COORDINATES */}
                           {robot.actualPosition && (
                             <div className="text-xs text-gray-500 mt-1 font-mono">
                               Pos: ({robot.actualPosition.x.toFixed(2)}, {robot.actualPosition.y.toFixed(2)})
@@ -576,108 +541,81 @@ const Monitor: React.FC = () => {
 
           {/* Map and Details */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Map with Zoom Controls */}
+            {/* Separate Static Map for Selected Robot */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-semibold text-gray-900">
-                    Live Map
+                    {selectedRobot ? `${selectedRobot.name}'s Map` : "Select a Robot"}
                   </h2>
                   <p className="text-sm text-gray-500 mt-1">
-                    Real-time robot positions
+                    {selectedRobot 
+                      ? `Position: (${selectedRobot.actualPosition?.x.toFixed(2) || 0}, ${selectedRobot.actualPosition?.y.toFixed(2) || 0})`
+                      : "Click a robot to view its map"
+                    }
                   </p>
                 </div>
                 
-                {/* Map Controls */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200"
-                    title="Upload Map Image"
-                  >
-                    <Upload className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={handleDownloadMapFromRobot}
-                    className="p-2 bg-purple-100 text-purple-600 rounded-lg hover:bg-purple-200"
-                    title="Get Map from Robot"
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-                  {mapImage && (
+                {/* Simple Map Controls */}
+                {selectedRobot && (
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={handleRemoveMapImage}
-                      className="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200"
-                      title="Remove Map Image"
+                      onClick={handleZoomIn}
+                      className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
+                      title="Zoom In"
                     >
-                      <X className="w-4 h-4" />
+                      <ZoomIn className="w-4 h-4" />
                     </button>
-                  )}
-                  <div className="h-6 w-px bg-gray-300" />
-                  <button
-                    onClick={handleZoomIn}
-                    className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
-                    title="Zoom In"
-                  >
-                    <ZoomIn className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={handleZoomOut}
-                    className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
-                    title="Zoom Out"
-                  >
-                    <ZoomOut className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={handleResetView}
-                    className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
-                    title="Reset View"
-                  >
-                    <Maximize2 className="w-4 h-4" />
-                  </button>
-                  <span className="text-xs text-gray-500 ml-2">
-                    {Math.round(zoom * 100)}%
-                  </span>
-                </div>
+                    <button
+                      onClick={handleZoomOut}
+                      className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
+                      title="Zoom Out"
+                    >
+                      <ZoomOut className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={handleResetView}
+                      className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
+                      title="Reset View"
+                    >
+                      <Maximize2 className="w-4 h-4" />
+                    </button>
+                    <span className="text-xs text-gray-500 ml-2">
+                      {Math.round(zoom * 100)}%
+                    </span>
+                  </div>
+                )}
               </div>
-              
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleMapImageUpload}
-                className="hidden"
-              />
 
-              <div
-                ref={mapContainerRef}
-                className="relative w-full h-96 bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg border-2 border-gray-200 overflow-hidden cursor-move"
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-                onWheel={handleWheel}
-              >
+              {!selectedRobot ? (
+                <div className="flex items-center justify-center h-96 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                  <div className="text-center text-gray-500">
+                    <MapPin className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+                    <p className="text-lg font-medium">No Robot Selected</p>
+                    <p className="text-sm mt-2">Select a robot from the list to view its map and location</p>
+                  </div>
+                </div>
+              ) : (
                 <div
-                  style={{
-                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                    transformOrigin: 'center',
-                    transition: isDragging ? 'none' : 'transform 0.1s',
-                    width: '100%',
-                    height: '100%',
-                    position: 'relative',
-                  }}
+                  ref={mapContainerRef}
+                  className="relative w-full h-96 bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg border-2 border-gray-200 overflow-hidden cursor-move"
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                  onWheel={handleWheel}
                 >
-                  {mapImage && (
-                    <img
-                      src={mapImage}
-                      alt="Fleet Map"
-                      className="absolute inset-0 w-full h-full object-contain"
-                      style={{ pointerEvents: 'none' }}
-                    />
-                  )}
-                  
-                  {!mapImage && (
+                  <div
+                    style={{
+                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                      transformOrigin: 'center',
+                      transition: isDragging ? 'none' : 'transform 0.1s',
+                      width: '100%',
+                      height: '100%',
+                      position: 'relative',
+                    }}
+                  >
+                    {/* Grid Background */}
                     <div
                       className="absolute inset-0"
                       style={{
@@ -688,146 +626,78 @@ const Monitor: React.FC = () => {
                         backgroundSize: "40px 40px",
                       }}
                     />
-                  )}
 
-                  {!mapImage && (
+                    {/* Center Cross (Origin) */}
                     <svg
                       className="absolute inset-0 w-full h-full"
                       style={{ pointerEvents: "none" }}
                     >
                       <line
-                        x1="25%"
+                        x1="50%"
                         y1="0"
-                        x2="25%"
-                        y2="60%"
-                        stroke="#9ca3af"
-                        strokeWidth="2"
-                      />
-                      <line
-                        x1="25%"
-                        y1="60%"
-                        x2="0"
-                        y2="60%"
-                        stroke="#9ca3af"
-                        strokeWidth="2"
-                      />
-                      <line
-                        x1="55%"
-                        y1="0"
-                        x2="55%"
-                        y2="75%"
-                        stroke="#9ca3af"
-                        strokeWidth="2"
-                      />
-                      <line
-                        x1="0"
-                        y1="30%"
-                        x2="100%"
-                        y2="30%"
-                        stroke="#9ca3af"
-                        strokeWidth="2"
-                      />
-                      <line
-                        x1="40%"
-                        y1="30%"
-                        x2="40%"
+                        x2="50%"
                         y2="100%"
                         stroke="#9ca3af"
                         strokeWidth="2"
+                        strokeDasharray="5,5"
                       />
                       <line
-                        x1="75%"
-                        y1="15%"
-                        x2="75%"
-                        y2="75%"
+                        x1="0"
+                        y1="50%"
+                        x2="100%"
+                        y2="50%"
                         stroke="#9ca3af"
                         strokeWidth="2"
+                        strokeDasharray="5,5"
                       />
+                      <text x="51%" y="48%" fill="#6b7280" fontSize="12">Origin (0,0)</text>
                     </svg>
-                  )}
-
-                  {!mapImage && (
-                    <>
-                      <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm">
-                        <span className="text-xs font-medium text-gray-700">
-                          Zone A
-                        </span>
-                      </div>
-                      <div className="absolute top-4 right-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg shadow-sm">
-                        <span className="text-xs font-medium text-gray-700">
-                          Zone B
-                        </span>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Robots */}
-                  {robots.map((robot) => (
+                    
+                    {/* Robot Position Marker - Always at Center */}
                     <div
-                      key={robot.id}
-                      className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all duration-500 ${
-                        selectedRobot?.id === robot.id ? "z-10 scale-110" : "z-0"
-                      }`}
+                      className="absolute transform -translate-x-1/2 -translate-y-1/2 z-10"
                       style={{
-                        left: `${robot.position.x}%`,
-                        top: `${robot.position.y}%`,
+                        left: '50%',
+                        top: '50%',
                         pointerEvents: 'none',
                       }}
                     >
-                      <div
-                        className={`relative w-10 h-10 rounded-full shadow-lg flex items-center justify-center ${getStatusColor(
-                          robot.status
-                        )} ${
-                          selectedRobot?.id === robot.id
-                            ? "ring-4 ring-blue-600 ring-opacity-50"
-                            : ""
-                        }`}
-                      >
-                        <Activity className="w-5 h-5 text-white" />
-
+                      {/* Robot marker */}
+                      <div className="relative w-12 h-12 rounded-full shadow-lg flex items-center justify-center bg-blue-500 ring-4 ring-blue-600 ring-opacity-50">
+                        <Activity className="w-6 h-6 text-white" />
+                        
+                        {/* Direction indicator */}
                         <div
-                          className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${getStatusColor(
-                            robot.status
-                          )}`}
+                          className="absolute w-8 h-1 bg-blue-600 origin-left"
+                          style={{
+                            transform: `rotate(${(-(selectedRobot.actualPosition?.yaw ?? 0)) * (180 / Math.PI)}deg)`,
+                            left: '50%',
+                            top: '50%',
+                          }}
                         />
                       </div>
 
-                      {/* ✅ DISPLAY ACTUAL COORDINATES */}
-                      <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white/95 backdrop-blur px-2 py-1 rounded shadow-sm whitespace-nowrap">
-                        <span className="text-xs font-medium text-gray-900 block">
-                          {robot.name}
+                      {/* Label */}
+                      <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white/95 backdrop-blur px-3 py-1.5 rounded shadow-sm whitespace-nowrap">
+                        <span className="text-sm font-medium text-gray-900 block">
+                          {selectedRobot.name}
                         </span>
-                        {robot.actualPosition && (
-                          <span className="text-xs text-gray-600 font-mono block">
-                            ({robot.actualPosition.x.toFixed(2)}, {robot.actualPosition.y.toFixed(2)})
-                          </span>
-                        )}
+                        <span className="text-xs text-gray-600 font-mono block">
+                          ({selectedRobot.actualPosition?.x.toFixed(2) || 0}, {selectedRobot.actualPosition?.y.toFixed(2) || 0})
+                        </span>
+                        <span className="text-xs text-gray-500 block">
+                          θ: {((selectedRobot.actualPosition?.yaw || 0) * (180 / Math.PI)).toFixed(1)}°
+                        </span>
                       </div>
                     </div>
-                  ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="mt-4 text-xs text-gray-500 space-y-1">
-                <p>• Scroll to zoom in/out</p>
-                <p>• Click and drag to pan the map</p>
-                <p>• Upload custom map or download from robot</p>
-              </div>
-
-              {/* Legend */}
-              <div className="flex items-center justify-center gap-6 mt-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-green-500 rounded-full" />
-                  <span className="text-gray-600">Online</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-yellow-500 rounded-full" />
-                  <span className="text-gray-600">Idle</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-500 rounded-full" />
-                  <span className="text-gray-600">Offline</span>
-                </div>
+                <p>• Each robot has its own map view (centered on robot)</p>
+                <p>• Scroll to zoom in/out, click and drag to pan</p>
+                <p>• Robot position shown with actual coordinates (no transformation)</p>
               </div>
             </div>
 
@@ -928,7 +798,6 @@ const Monitor: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* ✅ DISPLAY ACTUAL POSITION */}
                   <div className="bg-gray-50 rounded-lg p-4">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-blue-100 rounded-lg">
